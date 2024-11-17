@@ -218,10 +218,12 @@ class SVR05:
 
                     # Exclude the first byte and extract unlock_id
                     unlock_id = parameters[1]
+                    unlock_id_2 = parameters[2]
                     move_index_block["unlock_id"] = unlock_id
+                    move_index_block["unlock_id_2"] = unlock_id_2
                     move_index_block["parameters"] = [
-                        int(b) for b in parameters[2:]
-                    ]  # Remaining 3 bytes
+                        int(b) for b in parameters[3:]  # Remaining bytes (if any)
+                    ]
 
                     move_index_id = struct.unpack("<H", file.read(2))[0]
                     move_index_block["id"] = int(move_index_id)  # Convert to decimal
@@ -553,19 +555,23 @@ class YMIT:
 
                     # Handle parameters
                     parameters = move.get(
-                        "parameters", [0, 0, 0]
-                    )  # Expect 3 unknown items
-                    if not isinstance(parameters, list) or len(parameters) != 3:
-                        parameters = [0, 0, 0]  # Default to 3 zeros
+                        "parameters", [0, 0]
+                    )  # Expect 2 unknown items
+                    if not isinstance(parameters, list) or len(parameters) != 2:
+                        parameters = [0, 0]  # Default to 2 zeros
 
-                    # Include unlock_id in the parameters
+                    # Include unlock_id and unlock_id_flag in the parameters
                     unlock_id = move.get("unlock_id", 0)
+                    unlock_id_2 = move.get("unlock_id_2", 0)
                     if not isinstance(unlock_id, int) or not (0 <= unlock_id <= 255):
                         unlock_id = 0  # Default to 0 if invalid
+                    if not isinstance(unlock_id_2, int) or not (0 <= unlock_id_2 <= 255):
+                        unlock_id_2 = 0  # Default to 0 if invalid
 
                     # Construct the final 5-byte parameters array
-                    parameters_with_flags = [column_flag_byte, unlock_id, *parameters]
+                    parameters_with_flags = [column_flag_byte, unlock_id, unlock_id_2, *parameters]
                     binary_file.write(struct.pack("<5B", *parameters_with_flags))
+
 
                     # Handle move ID
                     move_id = move.get("id", 0)
