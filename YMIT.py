@@ -184,10 +184,44 @@ class SVR05:
                         ],
                     }
 
+                    # Column flag mappings
+                    column_flag_map = {
+                        0x01: "GY BACK",
+                        0x02: "Upper Ground",
+                        0x03: "Lower Ground",
+                        0x04: "Ground Facing Up U",
+                        0x05: "Ground Facing Up L",
+                        0x06: "Face on Ground U",
+                        0x07: "Face on Ground L",
+                        0x08: "Down Diving",
+                        0x09: "Face TB",
+                        0x0A: "Back TB",
+                        0x0B: "Under TB",
+                        0x0C: "Rope Down",
+                        0x0D: "Stand Diving",
+                        0x0E: "Running",
+                    }
+
+                    # Extract parameters
                     parameters = file.read(5)
+                    column_flag_byte = parameters[0]
+                    column_flags = (
+                        {column_flag_map[column_flag_byte]: True}
+                        if column_flag_byte in column_flag_map
+                        else {}
+                    )
+                    if not isinstance(
+                        column_flags, dict
+                    ):  # Ensure column_flags is a dictionary
+                        column_flags = {}  # Default to an empty dictionary
+                    move_index_block["column_flags"] = column_flags
+
+                    # Exclude the first byte and extract unlock_id
+                    unlock_id = parameters[1]
+                    move_index_block["unlock_id"] = unlock_id
                     move_index_block["parameters"] = [
-                        int(b) for b in parameters  # Convert bytes to decimal
-                    ]
+                        int(b) for b in parameters[2:]
+                    ]  # Remaining 3 bytes
 
                     move_index_id = struct.unpack("<H", file.read(2))[0]
                     move_index_block["id"] = int(move_index_id)  # Convert to decimal
@@ -299,7 +333,7 @@ class YMIT:
                 result = {}
                 for child in children:
                     key = self.treeview.item(child, "text")
-                    if key == "categories":  # Skip categories
+                    if key == "categories" or key == "total_moves":
                         continue
                     value = tree_to_structure(child)
                     result[key] = value
@@ -318,8 +352,6 @@ class YMIT:
                 messagebox.showinfo("Success", "File saved successfully.")
             except Exception as e:
                 messagebox.showerror("Error", str(e))
-
-
 
     def serialise_waza(self):
         input_json_filename = filedialog.askopenfilename(
@@ -472,11 +504,68 @@ class YMIT:
                         )
                     )
 
+                    # Handle column flags
+                    # Column flag mappings
+                    column_flag_map = {
+                        0x01: "GY BACK",
+                        0x02: "Upper Ground",
+                        0x03: "Lower Ground",
+                        0x04: "Ground Facing Up U",
+                        0x05: "Ground Facing Up L",
+                        0x06: "Face on Ground U",
+                        0x07: "Face on Ground L",
+                        0x08: "Down Diving",
+                        0x09: "Face TB",
+                        0x0A: "Back TB",
+                        0x0B: "Under TB",
+                        0x0C: "Rope Down",
+                        0x0D: "Stand Diving",
+                        0x0E: "Running",
+                    }
+
+                    # Ensure column_flags is a dictionary
+                    column_flags = move.get("column_flags", {})
+                    if isinstance(
+                        column_flags, str
+                    ):  # If column_flags is a string (incorrect format)
+                        # Attempt to parse string into a dictionary
+                        try:
+                            column_flags = json.loads(column_flags)
+                        except (json.JSONDecodeError, TypeError):
+                            column_flags = (
+                                {}
+                            )  # Fallback to empty dictionary if parsing fails
+
+                    if not isinstance(
+                        column_flags, dict
+                    ):  # Final check to ensure it's a dictionary
+                        column_flags = {}
+
+                    # Default column_flag_byte to 0x00 (disabled)
+                    column_flag_byte = 0x00
+                    for key, value in column_flags.items():
+                        if value and key in column_flag_map.values():
+                            # Find the corresponding byte value for the flag name
+                            column_flag_byte = list(column_flag_map.keys())[
+                                list(column_flag_map.values()).index(key)
+                            ]
+                            break
+
                     # Handle parameters
-                    parameters = move.get("parameters", [0, 0, 0, 0, 0])
-                    if not isinstance(parameters, list) or len(parameters) != 5:
-                        parameters = [0, 0, 0, 0, 0]
-                    binary_file.write(struct.pack("<5B", *parameters))
+                    parameters = move.get(
+                        "parameters", [0, 0, 0]
+                    )  # Expect 3 unknown items
+                    if not isinstance(parameters, list) or len(parameters) != 3:
+                        parameters = [0, 0, 0]  # Default to 3 zeros
+
+                    # Include unlock_id in the parameters
+                    unlock_id = move.get("unlock_id", 0)
+                    if not isinstance(unlock_id, int) or not (0 <= unlock_id <= 255):
+                        unlock_id = 0  # Default to 0 if invalid
+
+                    # Construct the final 5-byte parameters array
+                    parameters_with_flags = [column_flag_byte, unlock_id, *parameters]
+                    binary_file.write(struct.pack("<5B", *parameters_with_flags))
 
                     # Handle move ID
                     move_id = move.get("id", 0)
@@ -484,15 +573,11 @@ class YMIT:
                         move_id = 0
                     binary_file.write(struct.pack("<H", move_id))
 
-            messagebox.showinfo("Serialisation Complete", f"Output saved to {output_waza_filename}")
+            messagebox.showinfo(
+                "Serialisation Complete", f"Output saved to {output_waza_filename}"
+            )
         except Exception as e:
             messagebox.showerror("Error", str(e))
-
-
-
-
-
-
 
 
 if __name__ == "__main__":
