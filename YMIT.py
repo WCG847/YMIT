@@ -12,13 +12,12 @@ import traceback
 import threading
 import time
 
-
 import win32con
 import win32process
-
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk, Menu
 from tkinter import font as tkfont
+
 
 log_dir = os.path.join(os.getenv("LOCALAPPDATA"), "WCG847", "YMIT", "logs")
 try:
@@ -45,6 +44,152 @@ PRIORITY_CLASSES = {
     "HIGH": win32process.HIGH_PRIORITY_CLASS,
     "REALTIME": win32process.REALTIME_PRIORITY_CLASS,
 }
+
+
+# Add calls to handle_critical_error in relevant try-except blocks
+def monitor_and_adjust_priority(self):
+    try:
+        p = psutil.Process()
+        while True:
+            cpu_usage = p.cpu_percent(interval=1)
+            if cpu_usage < 10:
+                set_process_priority("IDLE")
+            elif 10 <= cpu_usage < 30:
+                set_process_priority("BELOW_NORMAL")
+            elif 30 <= cpu_usage < 60:
+                set_process_priority("NORMAL")
+            elif 60 <= cpu_usage < 80:
+                set_process_priority("ABOVE_NORMAL")
+            else:
+                set_process_priority("HIGH")
+            logging.info(f"CPU usage: {cpu_usage}% - Priority adjusted.")
+            time.sleep(5)
+    except Exception as e:
+        handle_critical_error(e)
+
+
+def update_heartbeat(self):
+    """Update the heartbeat timestamp periodically, even if there is no user input."""
+    self.last_heartbeat = time.time()
+    logging.debug("Heartbeat updated.")
+
+
+def watchdog(self_instance):
+    """Monitor the application's health, distinguishing between lockup and inactivity."""
+    max_inactive_duration = 300  # 5 minutes
+    while True:
+        time.sleep(10)
+        time_since_last_heartbeat = time.time() - self_instance.last_heartbeat
+        if time_since_last_heartbeat > max_inactive_duration:
+            logging.warning(
+                f"No heartbeat detected in {time_since_last_heartbeat} seconds. "
+                "Application may be unresponsive."
+            )
+            # Check for potential freeze
+            self_instance.monitor_for_freeze()
+        else:
+            logging.debug("Application heartbeat is active.")
+
+
+def monitor_for_freeze(self):
+    """Monitor CPU usage to detect if the application is frozen."""
+    try:
+        p = psutil.Process()
+        cpu_usage = p.cpu_percent(interval=1)
+        if cpu_usage < 5:  # Assumes the application is frozen if CPU usage is below 5%
+            logging.warning("CPU usage is extremely low, indicating potential freeze.")
+            self.ask_for_manual_recovery()
+        else:
+            logging.info(f"Application is responsive with CPU usage at {cpu_usage}%")
+    except Exception as e:
+        logging.error(f"Error while checking CPU usage: {e}")
+
+
+def ask_for_manual_recovery(self):
+    response = messagebox.askyesno(
+        "Application Not Responding",
+        "It seems the application has stopped responding. Do you want to attempt recovery?",
+    )
+    if response:
+        self.attempt_recovery()
+    else:
+        logging.error("User opted not to attempt recovery. Exiting.")
+        sys.exit(1)
+
+
+def is_healthy(self):
+    return self.afs_path is not None and self.tree.get_children()
+
+
+def attempt_recovery(self):
+    try:
+        if self.afs_path:
+            with open(self.afs_path, "rb") as afs_file:
+                self.parse_afs(afs_file)
+            messagebox.showinfo("Recovery", "Application recovered successfully.")
+    except Exception as e:
+        handle_critical_error(e)
+
+
+def run_in_thread(self, target, *args, timeout=None, max_retries=1):
+    """
+    Runs a target function in a new thread with enhanced lifecycle management.
+
+    Parameters:
+    - target: Callable to execute in the thread.
+    - args: Positional arguments for the target function.
+    - timeout: Maximum allowed time for the thread to complete (in seconds). Default is None (no timeout).
+    - max_retries: Maximum number of times to retry in case of failure. Default is 1.
+    """
+
+    def thread_wrapper():
+        nonlocal retries
+        try:
+            logging.info(f"Thread started for {target.__name__} with args: {args}")
+            retries = 0
+            while retries <= max_retries:
+                start_time = time.time()
+                try:
+                    target(*args)
+                    break  # Exit loop if successful
+                except Exception as e:
+                    retries += 1
+                    logging.error(
+                        f"Error in thread ({target.__name__}): {e}. Retrying {retries}/{max_retries}"
+                    )
+                    if retries > max_retries:
+                        raise
+                    time.sleep(2)  # Backoff before retrying
+
+                # Timeout enforcement
+                elapsed_time = time.time() - start_time
+                if timeout and elapsed_time > timeout:
+                    logging.error(
+                        f"Thread {target.__name__} timed out after {timeout} seconds."
+                    )
+                    raise TimeoutError(
+                        f"Execution of {target.__name__} exceeded timeout."
+                    )
+            else:
+                logging.info(f"Thread for {target.__name__} completed successfully.")
+
+        except Exception as e:
+            logging.error(f"Thread {target.__name__} failed: {e}")
+
+        finally:
+            with self.lock:
+                self.active_threads.remove(thread)
+            logging.info(f"Thread for {target.__name__} ended.")
+
+    # Create and track the thread
+    retries = 0
+    thread = threading.Thread(
+        target=thread_wrapper, daemon=True
+    )  # Daemon thread to ensure it exits with the main program
+    with self.lock:
+        self.active_threads.append(thread)
+    thread.start()
+    logging.info(f"Thread {thread.name} started for target {target.__name__}.")
 
 
 def set_process_priority(priority_class):
@@ -168,6 +313,7 @@ def write_minidump(exception_type, exception_value, tb):
 def install_exception_handler():
     sys.excepthook = write_minidump
 
+
 def restart_application():
     """Restarts the application using subprocess for automated recovery."""
     try:
@@ -214,6 +360,9 @@ class SVR05:
         Parses Yuke's Format
         -
         """
+
+        set_process_priority("ABOVE_NORMAL")
+
         if not filename.endswith(".dat"):
             raise ValueError("File must be of type '.DAT'")
 
@@ -407,6 +556,10 @@ class SVR05:
         except Exception as e:
             raise RuntimeError(f"An error occurred while parsing the file: {str(e)}")
 
+        finally:
+            # After parsing, reset the process priority to NORMAL
+            set_process_priority("NORMAL")
+
         return json.dumps(parsed_data, indent=4)
 
 
@@ -489,154 +642,12 @@ class YMIT:
         self.last_heartbeat = time.time()
 
         # Start monitoring application health in a separate thread
-        monitoring_thread = threading.Thread(target=self.watchdog, daemon=True)
+        monitoring_thread = threading.Thread(target=watchdog, args=(self,), daemon=True)
+        monitoring_thread = threading.Thread(
+            target=monitor_and_adjust_priority, args=(self,), daemon=True
+        )
         monitoring_thread.start()
 
-    # Add calls to handle_critical_error in relevant try-except blocks
-    def monitor_and_adjust_priority(self):
-        try:
-            p = psutil.Process()
-            while True:
-                cpu_usage = p.cpu_percent(interval=1)
-                if cpu_usage < 10:
-                    set_process_priority("IDLE")
-                elif 10 <= cpu_usage < 30:
-                    set_process_priority("BELOW_NORMAL")
-                elif 30 <= cpu_usage < 60:
-                    set_process_priority("NORMAL")
-                elif 60 <= cpu_usage < 80:
-                    set_process_priority("ABOVE_NORMAL")
-                else:
-                    set_process_priority("HIGH")
-                logging.info(f"CPU usage: {cpu_usage}% - Priority adjusted.")
-                time.sleep(5)
-        except Exception as e:
-            handle_critical_error(e)
-
-    def update_heartbeat(self):
-        """Update the heartbeat timestamp periodically, even if there is no user input."""
-        self.last_heartbeat = time.time()
-        logging.debug("Heartbeat updated.")
-
-    def watchdog(self):
-        """Monitor the application's health, distinguishing between lockup and inactivity."""
-        max_inactive_duration = 300  # 5 minutes
-        while True:
-            time.sleep(10)
-            time_since_last_heartbeat = time.time() - self.last_heartbeat
-            if time_since_last_heartbeat > max_inactive_duration:
-                logging.warning(
-                    f"No heartbeat detected in {time_since_last_heartbeat} seconds. "
-                    "Application may be unresponsive."
-                )
-                # Check for potential freeze
-                self.monitor_for_freeze()
-            else:
-                logging.debug("Application heartbeat is active.")
-
-    def monitor_for_freeze(self):
-        """Monitor CPU usage to detect if the application is frozen."""
-        try:
-            p = psutil.Process()
-            cpu_usage = p.cpu_percent(interval=1)
-            if (
-                cpu_usage < 5
-            ):  # Assumes the application is frozen if CPU usage is below 5%
-                logging.warning(
-                    "CPU usage is extremely low, indicating potential freeze."
-                )
-                self.ask_for_manual_recovery()
-            else:
-                logging.info(
-                    f"Application is responsive with CPU usage at {cpu_usage}%"
-                )
-        except Exception as e:
-            logging.error(f"Error while checking CPU usage: {e}")
-
-    def ask_for_manual_recovery(self):
-        response = messagebox.askyesno(
-            "Application Not Responding",
-            "It seems the application has stopped responding. Do you want to attempt recovery?",
-        )
-        if response:
-            self.attempt_recovery()
-        else:
-            logging.error("User opted not to attempt recovery. Exiting.")
-            sys.exit(1)
-
-    def is_healthy(self):
-        return self.afs_path is not None and self.tree.get_children()
-
-    def attempt_recovery(self):
-        try:
-            if self.afs_path:
-                with open(self.afs_path, "rb") as afs_file:
-                    self.parse_afs(afs_file)
-                messagebox.showinfo("Recovery", "Application recovered successfully.")
-        except Exception as e:
-            handle_critical_error(e)
-
-    def run_in_thread(self, target, *args, timeout=None, max_retries=1):
-        """
-        Runs a target function in a new thread with enhanced lifecycle management.
-
-        Parameters:
-        - target: Callable to execute in the thread.
-        - args: Positional arguments for the target function.
-        - timeout: Maximum allowed time for the thread to complete (in seconds). Default is None (no timeout).
-        - max_retries: Maximum number of times to retry in case of failure. Default is 1.
-        """
-
-        def thread_wrapper():
-            nonlocal retries
-            try:
-                logging.info(f"Thread started for {target.__name__} with args: {args}")
-                retries = 0
-                while retries <= max_retries:
-                    start_time = time.time()
-                    try:
-                        target(*args)
-                        break  # Exit loop if successful
-                    except Exception as e:
-                        retries += 1
-                        logging.error(
-                            f"Error in thread ({target.__name__}): {e}. Retrying {retries}/{max_retries}"
-                        )
-                        if retries > max_retries:
-                            raise
-                        time.sleep(2)  # Backoff before retrying
-
-                    # Timeout enforcement
-                    elapsed_time = time.time() - start_time
-                    if timeout and elapsed_time > timeout:
-                        logging.error(
-                            f"Thread {target.__name__} timed out after {timeout} seconds."
-                        )
-                        raise TimeoutError(
-                            f"Execution of {target.__name__} exceeded timeout."
-                        )
-                else:
-                    logging.info(
-                        f"Thread for {target.__name__} completed successfully."
-                    )
-
-            except Exception as e:
-                logging.error(f"Thread {target.__name__} failed: {e}")
-
-            finally:
-                with self.lock:
-                    self.active_threads.remove(thread)
-                logging.info(f"Thread for {target.__name__} ended.")
-
-        # Create and track the thread
-        retries = 0
-        thread = threading.Thread(
-            target=thread_wrapper, daemon=True
-        )  # Daemon thread to ensure it exits with the main program
-        with self.lock:
-            self.active_threads.append(thread)
-        thread.start()
-        logging.info(f"Thread {thread.name} started for target {target.__name__}.")
     def pref_display(self):
         # Create a new window for preferences
         pref_window = tk.Toplevel(self.root)
@@ -779,6 +790,7 @@ class YMIT:
                 values = self.treeview.item(parent, "values")
                 if values and values[0]:
                     try:
+                        set_process_priority("ABOVE_NORMAL")
                         return json.loads(values[0])
                     except json.JSONDecodeError:
                         return values[0]
@@ -804,12 +816,16 @@ class YMIT:
         )
         if filename:
             try:
+
                 data = tree_to_structure()
                 with open(filename, "w") as f:
                     json.dump(data, f, indent=4)
                 messagebox.showinfo("Success", "File saved successfully.")
             except Exception as e:
                 messagebox.showerror("Error", str(e))
+
+            finally:
+                set_process_priority("NORMAL")
 
     def serialise_waza(self):
         input_json_filename = filedialog.askopenfilename(
@@ -826,6 +842,8 @@ class YMIT:
         )
         if not output_waza_filename:
             return
+
+        set_process_priority("ABOVE_NORMAL")
 
         try:
             with open(input_json_filename, "r") as json_file:
@@ -1021,13 +1039,19 @@ class YMIT:
                     unlock_id_2 = move.get("unlock_id_2", 0)
                     if not isinstance(unlock_id, int) or not (0 <= unlock_id <= 255):
                         unlock_id = 0  # Default to 0 if invalid
-                    if not isinstance(unlock_id_2, int) or not (0 <= unlock_id_2 <= 255):
+                    if not isinstance(unlock_id_2, int) or not (
+                        0 <= unlock_id_2 <= 255
+                    ):
                         unlock_id_2 = 0  # Default to 0 if invalid
 
                     # Construct the final 5-byte parameters array
-                    parameters_with_flags = [column_flag_byte, unlock_id, unlock_id_2, *parameters]
+                    parameters_with_flags = [
+                        column_flag_byte,
+                        unlock_id,
+                        unlock_id_2,
+                        *parameters,
+                    ]
                     binary_file.write(struct.pack("<5B", *parameters_with_flags))
-
 
                     # Handle move ID
                     move_id = move.get("id", 0)
@@ -1040,6 +1064,10 @@ class YMIT:
             )
         except Exception as e:
             messagebox.showerror("Error", str(e))
+
+        finally:
+            # After serialization, reset priority to normal
+            set_process_priority("NORMAL")
 
     def about_display(self, title, description):
         about_window = tk.Toplevel()
@@ -1060,7 +1088,6 @@ class YMIT:
         text_widget.insert(tk.END, description)
         text_widget.config(state=tk.DISABLED)
         text_widget.pack(expand=True, fill=tk.BOTH, padx=20, pady=20)
-
 
 
 if __name__ == "__main__":
