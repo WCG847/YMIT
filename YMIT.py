@@ -352,6 +352,206 @@ def sanitise_move_name(raw_name):
         return raw_name.split("\x00", 1)[0].strip()
     return ""
 
+CATEGORY_NAMES = [
+            "fighting_stances",
+            "taunts",
+            "unknown_2",
+            "unknown_3",
+            "unknown_4",
+            "unknown_5",
+            "unknown_6",
+            "unknown_7",
+            "unknown_8",
+            "unknown_9",
+            "unknown_10",
+            "unknown_11",
+            "unknown_12",
+            "unknown_13",
+            "unknown_14",
+            "unknown_15",
+            "unknown_16",
+            "unknown_17",
+            "unknown_18",
+            "unknown_19",
+            "unknown_20",
+            "unknown_21",
+            "unknown_22",
+            "unknown_23",
+            "unknown_24",
+            "unknown_25",
+            "unknown_26",
+            "unknown_27",
+            "unknown_28",
+            "unknown_29",
+            "unknown_30",
+            "unknown_31",
+            "unknown_32",
+            "unknown_33",
+            "unknown_34",
+            "unknown_35",
+            "unknown_36",
+            "unknown_37",
+            "unknown_38",
+            "unknown_39",
+            "unknown_40",
+            "unknown_41",
+            "unknown_42",
+            "unknown_43",
+            "unknown_44",
+            "unknown_45",
+            "unknown_46",
+            "unknown_47",
+            "unknown_48",
+            "unknown_49",
+            "unknown_50",
+            "unknown_51",
+            "unknown_52",
+            "unknown_53",
+            "unknown_54",
+            "unknown_55",
+            "unknown_56",
+            "unknown_57",
+            "unknown_58",
+            "unknown_59",
+            "unknown_60",
+            "unknown_61",
+            "unknown_62",
+            "unknown_63",
+        ]
+
+COLUMN_FLAG_MAP = {
+    0x01: "GY BACK",
+    0x02: "Upper Ground",
+    0x03: "Lower Ground",
+    0x04: "Ground Facing Up U",
+    0x05: "Ground Facing Up L",
+    0x06: "Face on Ground U",
+    0x07: "Face on Ground L",
+    0x08: "Down Diving",
+    0x09: "Face TB",
+    0x0A: "Back TB",
+    0x0B: "Under TB",
+    0x0C: "Rope Down",
+    0x0D: "Stand Diving",
+    0x0E: "Running",
+}
+
+class HCTP:
+    @staticmethod
+    def parse_waza(filename):
+        """
+        Parses HCTP Move Format
+        """
+        category_names = CATEGORY_NAMES
+        column_flag_map = COLUMN_FLAG_MAP
+
+        set_process_priority("ABOVE_NORMAL")
+
+        if not filename.endswith(".dat"):
+            raise ValueError("File must be of type '.DAT'")
+
+        parsed_data = {"header": None, "total_moves": 0, "moves": []}
+
+        try:
+            with open(filename, "rb") as file:
+                # Read and validate the magic header
+                raw_bytes = file.read(2)
+                if raw_bytes == b"\xFF\x00":
+                    magic_header = 0xFF00
+                else:
+                    magic_header = struct.unpack("<H", raw_bytes)[0]
+
+                if magic_header != 0xFF00:
+                    raise ValueError("Illegal Format: Invalid Magic")
+                    logging.error("Illegal Magic Header")
+
+                parsed_data["header"] = "HCTP"
+
+                # Skip padding
+                file.read(2)
+
+                # Total Move Count
+                total_moves = struct.unpack("<H", file.read(2))[0]
+                parsed_data["total_moves"] = total_moves
+
+                # Skip the next padding bytes
+                file.read(10)
+
+                # Start reading the move table sector directly
+                for move_index in range(total_moves):
+                    move_index_block = {}
+
+                    if move_index == 0:
+                        # First move has no header, starts directly with category flags
+                        category_flags = struct.unpack("<16B", file.read(16))
+                    else:
+                        # Subsequent moves have a header
+                        header = file.read(6)
+                        if header != b"\xFF\xFF\xFF\xFF\xFF\xFF":
+                            raise ValueError(f"Invalid move header at index {move_index}")
+                        category_flags = struct.unpack("<16B", file.read(16))
+
+                    # Category flags (UINT8, 0x10 long, split into 64 bits)
+                    move_index_block["category_flags"] = {
+                        category_names[i]: bool(category_flags[i // 8] & (1 << (i % 8)))
+                        for i in range(64)
+                        if bool(
+                            category_flags[i // 8]
+                            & (1 << (i % 8))  # Only display categories set to True
+                        )
+                    }
+
+                    move_name = file.read(32).decode("utf-8")
+                    move_index_block["name"] = sanitise_move_name(move_name)
+
+                    damage_flags = struct.unpack("<3B", file.read(3))
+                    move_index_block["damage_flags"] = {
+                        "unknown_flag": damage_flags[0],
+                        "damage_value": damage_flags[1],
+                        "exclusive_id": damage_flags[  # Which wrestler the move depends on.
+                            2
+                        ],
+                    }
+
+
+                    # Extract parameters
+                    parameters = file.read(5)
+                    column_flag_byte = parameters[0]
+                    column_flags = (
+                        {column_flag_map[column_flag_byte]: True}
+                        if column_flag_byte in column_flag_map
+                        else {}
+                    )
+                    if not isinstance(
+                        column_flags, dict
+                    ):  # Ensure column_flags is a dictionary
+                        column_flags = {}  # Default to an empty dictionary
+                    move_index_block["column_flags"] = column_flags
+
+                    # Exclude the first byte and extract unlock_id
+                    unlock_id = parameters[1]
+                    unlock_id_2 = parameters[2]
+                    move_index_block["unlock_id"] = unlock_id
+                    move_index_block["unlock_id_2"] = unlock_id_2
+                    move_index_block["parameters"] = [
+                        int(b) for b in parameters[3:]  # Remaining bytes (if any)
+                    ]
+
+                    move_index_id = struct.unpack("<H", file.read(2))[0]
+                    move_index_block["id"] = int(move_index_id)  # Convert to decimal
+
+                    parsed_data["moves"].append(move_index_block)
+
+        except FileNotFoundError:
+            raise FileNotFoundError(f"File {filename} not found.")
+        except Exception as e:
+            raise RuntimeError(f"An error occurred while parsing the file: {str(e)}")
+
+        finally:
+            # After parsing, reset the process priority to NORMAL
+            set_process_priority("NORMAL")
+
+        return json.dumps(parsed_data, indent=4)
 
 class SVR05:
     @staticmethod
@@ -360,7 +560,8 @@ class SVR05:
         Parses Yuke's Format
         -
         """
-
+        category_names = CATEGORY_NAMES
+        column_flag_map = COLUMN_FLAG_MAP
         set_process_priority("ABOVE_NORMAL")
 
         if not filename.endswith(".dat"):
@@ -562,6 +763,48 @@ class SVR05:
 
         return json.dumps(parsed_data, indent=4)
 
+class WazaParser:
+    @staticmethod
+    def parse_waza(filename):
+        """
+        Determines the format of the WAZA file and parses it accordingly.
+        """
+        set_process_priority("ABOVE_NORMAL")
+
+        if not filename.endswith(".dat"):
+            raise ValueError("File must be of type '.DAT'")
+
+        try:
+            with open(filename, "rb") as file:
+                # Validate magic header
+                raw_bytes = file.read(2)
+                if raw_bytes == b"\xFF\x00":
+                    magic_header = 0xFF00
+                else:
+                    magic_header = struct.unpack("<H", raw_bytes)[0]
+
+                if magic_header != 0xFF00:
+                    raise ValueError("Illegal Format: Invalid Magic")
+                    logging.error("Illegal Magic Header")
+
+                # Check the value at offset 0x08
+                file.seek(8)
+                format_indicator = struct.unpack("<B", file.read(1))[0]
+
+                # Select parser based on format indicator
+                if format_indicator == 0x00:
+                    logging.info("Detected HCTP format.")
+                    return HCTP.parse_waza(filename)
+                else:
+                    logging.info("Detected SVR05 format.")
+                    return SVR05.parse_waza(filename)
+
+        except FileNotFoundError:
+            raise FileNotFoundError(f"File {filename} not found.")
+        except Exception as e:
+            raise RuntimeError(f"An error occurred while parsing the file: {str(e)}")
+        finally:
+            set_process_priority("NORMAL")
 
 class YMIT:
     def __init__(self, root):
@@ -751,10 +994,12 @@ class YMIT:
                 filetypes=(("Yuke's Move Table Format", "*.dat"), ("All files", "*.*")),
             )
             if filename:
-                parsed_data = SVR05.parse_waza(filename)
+                parsed_data = WazaParser.parse_waza(filename)
                 self.populate_treeview(json.loads(parsed_data))
         except Exception as e:
             messagebox.showerror("Error", str(e))
+
+
 
     def populate_treeview(self, data, parent=""):
 
@@ -828,6 +1073,8 @@ class YMIT:
                 set_process_priority("NORMAL")
 
     def serialise_waza(self):
+        category_names = CATEGORY_NAMES
+        column_flag_map = COLUMN_FLAG_MAP
         input_json_filename = filedialog.askopenfilename(
             title="Select JSON",
             filetypes=(("JSON Files", "*.json"), ("All Files", "*.*")),
@@ -849,80 +1096,20 @@ class YMIT:
             with open(input_json_filename, "r") as json_file:
                 data = json.load(json_file)
 
+            # Handle 'moves' as a dictionary
             moves = data.get("moves", {})
             if not isinstance(moves, dict):
                 raise ValueError("'moves' must be a dictionary in the JSON schema.")
 
-            moves_list = list(moves.values())  # Extract the list of moves
+            # Convert dictionary values to a list of moves
+            moves_list = list(moves.values())
             total_moves = len(moves_list)
 
-            # Dynamically calculate category counts based on category_names
-            category_names = [
-                "fighting_stances",
-                "taunts",
-                "unknown_2",
-                "unknown_3",
-                "unknown_4",
-                "unknown_5",
-                "unknown_6",
-                "unknown_7",
-                "unknown_8",
-                "unknown_9",
-                "unknown_10",
-                "unknown_11",
-                "unknown_12",
-                "unknown_13",
-                "unknown_14",
-                "unknown_15",
-                "unknown_16",
-                "unknown_17",
-                "unknown_18",
-                "unknown_19",
-                "unknown_20",
-                "unknown_21",
-                "unknown_22",
-                "unknown_23",
-                "unknown_24",
-                "unknown_25",
-                "unknown_26",
-                "unknown_27",
-                "unknown_28",
-                "unknown_29",
-                "unknown_30",
-                "unknown_31",
-                "unknown_32",
-                "unknown_33",
-                "unknown_34",
-                "unknown_35",
-                "unknown_36",
-                "unknown_37",
-                "unknown_38",
-                "unknown_39",
-                "unknown_40",
-                "unknown_41",
-                "unknown_42",
-                "unknown_43",
-                "unknown_44",
-                "unknown_45",
-                "unknown_46",
-                "unknown_47",
-                "unknown_48",
-                "unknown_49",
-                "unknown_50",
-                "unknown_51",
-                "unknown_52",
-                "unknown_53",
-                "unknown_54",
-                "unknown_55",
-                "unknown_56",
-                "unknown_57",
-                "unknown_58",
-                "unknown_59",
-                "unknown_60",
-                "unknown_61",
-                "unknown_62",
-                "unknown_63",
-            ]
+            # Determine format from the parsed JSON header
+            format_header = data.get("header", "SVR05")
+            if format_header not in ["SVR05", "HCTP"]:
+                raise ValueError(f"Unknown format header: {format_header}")
+
             category_counts = {name: 0 for name in category_names}
 
             with open(output_waza_filename, "wb") as binary_file:
@@ -931,24 +1118,29 @@ class YMIT:
                 binary_file.write(struct.pack("<H", total_moves))
                 binary_file.write(b"\x00\x00")
 
-                # Iterate over moves to calculate category counts
-                for move in moves_list:
-                    if not isinstance(move, dict):
-                        continue
+                if format_header == "SVR05":
+                    # Iterate over moves to calculate category counts
+                    for move in moves_list:
+                        category_flags = move.get("category_flags", {})
+                        for category, is_flag_set in category_flags.items():
+                            if category in category_counts and is_flag_set == "True":
+                                category_counts[category] += 1
 
-                    category_flags = move.get("category_flags", {})
-                    for category, is_flag_set in category_flags.items():
-                        if category in category_counts and is_flag_set == "True":
-                            category_counts[category] += 1
+                    # Write category counts to the binary file
+                    for category in category_names:
+                        binary_file.write(struct.pack("<H", category_counts[category]))
+                    binary_file.write(struct.pack("<H", 0xFFFF))  # EOCM
 
-                # Write category counts to the binary file
-                for category in category_names:
-                    binary_file.write(struct.pack("<H", category_counts[category]))
-                binary_file.write(struct.pack("<H", 0xFFFF))  # End of category marker
+                elif format_header == "HCTP":
+                    binary_file.write(b"\x00" * 8)
 
                 # Serialize each move
-                for move in moves_list:
-                    binary_file.write(b"\xFF\xFF\xFF\xFF\xFF\xFF")
+                for i, move in enumerate(moves_list):
+                    if format_header == "HCTP" and i == 0:
+                        # First move in HCTP: no move header
+                        pass
+                    else:
+                        binary_file.write(b"\xFF\xFF\xFF\xFF\xFF\xFF")
 
                     # Handle category flags
                     category_flags = [0] * 16
@@ -959,45 +1151,24 @@ class YMIT:
                             byte_index = category_index // 8
                             bit_position = category_index % 8
                             category_flags[byte_index] |= 1 << bit_position
-                    # Ensure all values are integers before packing
-                    binary_file.write(struct.pack("<16B", *map(int, category_flags)))
-
+                    binary_file.write(struct.pack("<16B", *category_flags))
 
                     # Handle move name
                     move_name = move.get("name", "Unknown").ljust(32, "\x00")[:32]
                     binary_file.write(move_name.encode("utf-8"))
 
-                    # Extract damage flags, ensuring default values and integer casting
+                    # Extract damage flags
                     damage_flags = move.get("damage_flags", {})
                     binary_file.write(
                         struct.pack(
                             "<3B",
-                            int(damage_flags.get("unknown_flag", 0)),
-                            int(damage_flags.get("damage_value", 0)),
-                            int(damage_flags.get("exclusive_id", 0)),
+                            damage_flags.get("unknown_flag", 0),
+                            damage_flags.get("damage_value", 0),
+                            damage_flags.get("exclusive_id", 0),
                         )
                     )
 
-
-                    # Handle column flags
-                    # Column flag mappings
-                    column_flag_map = {
-                        0x01: "GY BACK",
-                        0x02: "Upper Ground",
-                        0x03: "Lower Ground",
-                        0x04: "Ground Facing Up U",
-                        0x05: "Ground Facing Up L",
-                        0x06: "Face on Ground U",
-                        0x07: "Face on Ground L",
-                        0x08: "Down Diving",
-                        0x09: "Face TB",
-                        0x0A: "Back TB",
-                        0x0B: "Under TB",
-                        0x0C: "Rope Down",
-                        0x0D: "Stand Diving",
-                        0x0E: "Running",
-                    }
-
+                    # Handle column flags and parameters
                     column_flag_byte = 0x00
                     column_flags = move.get("column_flags", {})
                     if isinstance(column_flags, dict):
@@ -1007,25 +1178,23 @@ class YMIT:
                                     list(column_flag_map.values()).index(key)
                                 ]
                                 break
-                    # Extract unlock_id and unlock_id_2, ensuring they are integers
-                    unlock_id = int(move.get("unlock_id", 0))
-                    unlock_id_2 = int(move.get("unlock_id_2", 0))
 
-                    # Extract parameters, default to [0, 0] if invalid
-                    parameters = move.get("parameters", [0, 0])
-                    if not isinstance(parameters, list) or len(parameters) != 2:
-                        parameters = [0, 0]  # Default fallback
-                    parameters = [int(param) for param in parameters]  # Ensure all are integers
+                    unlock_id = move.get("unlock_id", 0)
+                    unlock_id_2 = move.get("unlock_id_2", 0)
+                    parameters = move.get("parameters", {}).values()
+                    parameters = [int(param) for param in parameters]
 
-                    # Combine into the final 5-byte parameters array
-                    parameters_with_flags = [column_flag_byte, unlock_id, unlock_id_2, *parameters]
+                    parameters_with_flags = [
+                        column_flag_byte,
+                        unlock_id,
+                        unlock_id_2,
+                        *parameters,
+                    ]
                     binary_file.write(struct.pack("<5B", *parameters_with_flags))
-
 
                     # Handle move ID
                     move_id = move.get("id", 0)
-                    binary_file.write(struct.pack("<H", int(move_id)))
-
+                    binary_file.write(struct.pack("<H", move_id))
 
             messagebox.showinfo(
                 "Serialization Complete", f"Output saved to {output_waza_filename}"
@@ -1034,6 +1203,8 @@ class YMIT:
             messagebox.showerror("Error", str(e))
         finally:
             set_process_priority("NORMAL")
+
+
 
 
     def about_display(self, title, description):
