@@ -923,15 +923,7 @@ class YMIT:
                 "unknown_62",
                 "unknown_63",
             ]
-
             category_counts = {name: 0 for name in category_names}
-            for move in moves_list:
-                if not isinstance(move, dict):
-                    continue  # Skip invalid moves that are not dictionaries
-                category_flags = move.get("category_flags", {})
-                for category, is_flag_set in category_flags.items():
-                    if category in category_counts and is_flag_set == "True":
-                        category_counts[category] += 1
 
             with open(output_waza_filename, "wb") as binary_file:
                 # Write header and pads
@@ -939,15 +931,23 @@ class YMIT:
                 binary_file.write(struct.pack("<H", total_moves))
                 binary_file.write(b"\x00\x00")
 
-                # Serialise category counts in the order of category_names
-                for category in category_names:
-                    binary_file.write(struct.pack("<H", category_counts[category]))
-                binary_file.write(struct.pack("<H", 0xFFFF))  # End of category marker
-
+                # Iterate over moves to calculate category counts
                 for move in moves_list:
                     if not isinstance(move, dict):
                         continue
 
+                    category_flags = move.get("category_flags", {})
+                    for category, is_flag_set in category_flags.items():
+                        if category in category_counts and is_flag_set == "True":
+                            category_counts[category] += 1
+
+                # Write category counts to the binary file
+                for category in category_names:
+                    binary_file.write(struct.pack("<H", category_counts[category]))
+                binary_file.write(struct.pack("<H", 0xFFFF))  # End of category marker
+
+                # Serialize each move
+                for move in moves_list:
                     binary_file.write(b"\xFF\xFF\xFF\xFF\xFF\xFF")
 
                     # Handle category flags
@@ -959,18 +959,16 @@ class YMIT:
                             byte_index = category_index // 8
                             bit_position = category_index % 8
                             category_flags[byte_index] |= 1 << bit_position
-                    binary_file.write(struct.pack("<16B", *category_flags))
+                    # Ensure all values are integers before packing
+                    binary_file.write(struct.pack("<16B", *map(int, category_flags)))
+
 
                     # Handle move name
-                    move_name = move.get("name", "Unknown")
-                    if not isinstance(move_name, str):
-                        move_name = "Unknown"
-                    binary_file.write(move_name.ljust(32, "\x00").encode("utf-8"))
+                    move_name = move.get("name", "Unknown").ljust(32, "\x00")[:32]
+                    binary_file.write(move_name.encode("utf-8"))
 
-                    # Handle damage flags
+                    # Extract damage flags, ensuring default values and integer casting
                     damage_flags = move.get("damage_flags", {})
-                    if not isinstance(damage_flags, dict):
-                        damage_flags = {}
                     binary_file.write(
                         struct.pack(
                             "<3B",
@@ -979,6 +977,7 @@ class YMIT:
                             int(damage_flags.get("exclusive_id", 0)),
                         )
                     )
+
 
                     # Handle column flags
                     # Column flag mappings
@@ -999,75 +998,43 @@ class YMIT:
                         0x0E: "Running",
                     }
 
-                    # Ensure column_flags is a dictionary
-                    column_flags = move.get("column_flags", {})
-                    if isinstance(
-                        column_flags, str
-                    ):  # If column_flags is a string (incorrect format)
-                        # Attempt to parse string into a dictionary
-                        try:
-                            column_flags = json.loads(column_flags)
-                        except (json.JSONDecodeError, TypeError):
-                            column_flags = (
-                                {}
-                            )  # Fallback to empty dictionary if parsing fails
-
-                    if not isinstance(
-                        column_flags, dict
-                    ):  # Final check to ensure it's a dictionary
-                        column_flags = {}
-
-                    # Default column_flag_byte to 0x00 (disabled)
                     column_flag_byte = 0x00
-                    for key, value in column_flags.items():
-                        if value and key in column_flag_map.values():
-                            # Find the corresponding byte value for the flag name
-                            column_flag_byte = list(column_flag_map.keys())[
-                                list(column_flag_map.values()).index(key)
-                            ]
-                            break
+                    column_flags = move.get("column_flags", {})
+                    if isinstance(column_flags, dict):
+                        for key, value in column_flags.items():
+                            if value and key in column_flag_map.values():
+                                column_flag_byte = list(column_flag_map.keys())[
+                                    list(column_flag_map.values()).index(key)
+                                ]
+                                break
+                    # Extract unlock_id and unlock_id_2, ensuring they are integers
+                    unlock_id = int(move.get("unlock_id", 0))
+                    unlock_id_2 = int(move.get("unlock_id_2", 0))
 
-                    # Handle parameters
-                    parameters = move.get(
-                        "parameters", [0, 0]
-                    )  # Expect 2 unknown items
+                    # Extract parameters, default to [0, 0] if invalid
+                    parameters = move.get("parameters", [0, 0])
                     if not isinstance(parameters, list) or len(parameters) != 2:
-                        parameters = [0, 0]  # Default to 2 zeros
+                        parameters = [0, 0]  # Default fallback
+                    parameters = [int(param) for param in parameters]  # Ensure all are integers
 
-                    # Include unlock_id and unlock_id_flag in the parameters
-                    unlock_id = move.get("unlock_id", 0)
-                    unlock_id_2 = move.get("unlock_id_2", 0)
-                    if not isinstance(unlock_id, int) or not (0 <= unlock_id <= 255):
-                        unlock_id = 0  # Default to 0 if invalid
-                    if not isinstance(unlock_id_2, int) or not (
-                        0 <= unlock_id_2 <= 255
-                    ):
-                        unlock_id_2 = 0  # Default to 0 if invalid
-
-                    # Construct the final 5-byte parameters array
-                    parameters_with_flags = [
-                        column_flag_byte,
-                        unlock_id,
-                        unlock_id_2,
-                        *parameters,
-                    ]
+                    # Combine into the final 5-byte parameters array
+                    parameters_with_flags = [column_flag_byte, unlock_id, unlock_id_2, *parameters]
                     binary_file.write(struct.pack("<5B", *parameters_with_flags))
+
 
                     # Handle move ID
                     move_id = move.get("id", 0)
-                    if not isinstance(move_id, int):
-                        move_id = 0
-                    binary_file.write(struct.pack("<H", move_id))
+                    binary_file.write(struct.pack("<H", int(move_id)))
+
 
             messagebox.showinfo(
-                "Serialisation Complete", f"Output saved to {output_waza_filename}"
+                "Serialization Complete", f"Output saved to {output_waza_filename}"
             )
         except Exception as e:
             messagebox.showerror("Error", str(e))
-
         finally:
-            # After serialization, reset priority to normal
             set_process_priority("NORMAL")
+
 
     def about_display(self, title, description):
         about_window = tk.Toplevel()
