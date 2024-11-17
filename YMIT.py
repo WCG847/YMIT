@@ -352,72 +352,73 @@ def sanitise_move_name(raw_name):
         return raw_name.split("\x00", 1)[0].strip()
     return ""
 
+
 CATEGORY_NAMES = [
-            "fighting_stances",
-            "taunts",
-            "unknown_2",
-            "unknown_3",
-            "unknown_4",
-            "unknown_5",
-            "unknown_6",
-            "unknown_7",
-            "unknown_8",
-            "unknown_9",
-            "unknown_10",
-            "unknown_11",
-            "unknown_12",
-            "unknown_13",
-            "unknown_14",
-            "unknown_15",
-            "unknown_16",
-            "unknown_17",
-            "unknown_18",
-            "unknown_19",
-            "unknown_20",
-            "unknown_21",
-            "unknown_22",
-            "unknown_23",
-            "unknown_24",
-            "unknown_25",
-            "unknown_26",
-            "unknown_27",
-            "unknown_28",
-            "unknown_29",
-            "unknown_30",
-            "unknown_31",
-            "unknown_32",
-            "unknown_33",
-            "unknown_34",
-            "unknown_35",
-            "unknown_36",
-            "unknown_37",
-            "unknown_38",
-            "unknown_39",
-            "unknown_40",
-            "unknown_41",
-            "unknown_42",
-            "unknown_43",
-            "unknown_44",
-            "unknown_45",
-            "unknown_46",
-            "unknown_47",
-            "unknown_48",
-            "unknown_49",
-            "unknown_50",
-            "unknown_51",
-            "unknown_52",
-            "unknown_53",
-            "unknown_54",
-            "unknown_55",
-            "unknown_56",
-            "unknown_57",
-            "unknown_58",
-            "unknown_59",
-            "unknown_60",
-            "unknown_61",
-            "unknown_62",
-            "unknown_63",
-        ]
+    "fighting_stances",
+    "taunts",
+    "unknown_2",
+    "unknown_3",
+    "unknown_4",
+    "unknown_5",
+    "unknown_6",
+    "unknown_7",
+    "unknown_8",
+    "unknown_9",
+    "unknown_10",
+    "unknown_11",
+    "unknown_12",
+    "unknown_13",
+    "unknown_14",
+    "unknown_15",
+    "unknown_16",
+    "unknown_17",
+    "unknown_18",
+    "unknown_19",
+    "unknown_20",
+    "unknown_21",
+    "unknown_22",
+    "unknown_23",
+    "unknown_24",
+    "unknown_25",
+    "unknown_26",
+    "unknown_27",
+    "unknown_28",
+    "unknown_29",
+    "unknown_30",
+    "unknown_31",
+    "unknown_32",
+    "unknown_33",
+    "unknown_34",
+    "unknown_35",
+    "unknown_36",
+    "unknown_37",
+    "unknown_38",
+    "unknown_39",
+    "unknown_40",
+    "unknown_41",
+    "unknown_42",
+    "unknown_43",
+    "unknown_44",
+    "unknown_45",
+    "unknown_46",
+    "unknown_47",
+    "unknown_48",
+    "unknown_49",
+    "unknown_50",
+    "unknown_51",
+    "unknown_52",
+    "unknown_53",
+    "unknown_54",
+    "unknown_55",
+    "unknown_56",
+    "unknown_57",
+    "unknown_58",
+    "unknown_59",
+    "unknown_60",
+    "unknown_61",
+    "unknown_62",
+    "unknown_63",
+]
 
 COLUMN_FLAG_MAP = {
     0x01: "GY BACK",
@@ -435,6 +436,7 @@ COLUMN_FLAG_MAP = {
     0x0D: "Stand Diving",
     0x0E: "Running",
 }
+
 
 class HCTP:
     @staticmethod
@@ -488,7 +490,9 @@ class HCTP:
                         # Subsequent moves have a header
                         header = file.read(6)
                         if header != b"\xFF\xFF\xFF\xFF\xFF\xFF":
-                            raise ValueError(f"Invalid move header at index {move_index}")
+                            raise ValueError(
+                                f"Invalid move header at index {move_index}"
+                            )
                         category_flags = struct.unpack("<16B", file.read(16))
 
                     # Category flags (UINT8, 0x10 long, split into 64 bits)
@@ -512,7 +516,6 @@ class HCTP:
                             2
                         ],
                     }
-
 
                     # Extract parameters
                     parameters = file.read(5)
@@ -552,6 +555,7 @@ class HCTP:
             set_process_priority("NORMAL")
 
         return json.dumps(parsed_data, indent=4)
+
 
 class SVR05:
     @staticmethod
@@ -763,6 +767,7 @@ class SVR05:
 
         return json.dumps(parsed_data, indent=4)
 
+
 class WazaParser:
     @staticmethod
     def parse_waza(filename):
@@ -805,6 +810,7 @@ class WazaParser:
             raise RuntimeError(f"An error occurred while parsing the file: {str(e)}")
         finally:
             set_process_priority("NORMAL")
+
 
 class YMIT:
     def __init__(self, root):
@@ -998,8 +1004,6 @@ class YMIT:
                 self.populate_treeview(json.loads(parsed_data))
         except Exception as e:
             messagebox.showerror("Error", str(e))
-
-
 
     def populate_treeview(self, data, parent=""):
 
@@ -1203,9 +1207,6 @@ class YMIT:
             messagebox.showerror("Error", str(e))
         finally:
             set_process_priority("NORMAL")
-
-
-
 
     def about_display(self, title, description):
         about_window = tk.Toplevel()
