@@ -290,7 +290,7 @@ class YMIT:
                         return json.loads(values[0])
                     except json.JSONDecodeError:
                         return values[0]
-                return None
+                    return None
 
             first_child_values = self.treeview.item(children[0], "values")
             if first_child_values and first_child_values[0] == "list_item":
@@ -299,6 +299,8 @@ class YMIT:
                 result = {}
                 for child in children:
                     key = self.treeview.item(child, "text")
+                    if key == "categories":  # Skip categories
+                        continue
                     value = tree_to_structure(child)
                     result[key] = value
                 return result
@@ -310,37 +312,21 @@ class YMIT:
         )
         if filename:
             try:
-                if not hasattr(self, "treeview") or self.treeview is None:
-                    raise ValueError("treeview is not initialized or is None.")
-
                 data = tree_to_structure()
-
-                print("Final Data Structure:", json.dumps(data, indent=4))
-
                 with open(filename, "w") as f:
                     json.dump(data, f, indent=4)
-
                 messagebox.showinfo("Success", "File saved successfully.")
             except Exception as e:
+                messagebox.showerror("Error", str(e))
 
-                error_message = f"An error occurred: {str(e)}\n\n"
-                error_message += f"Exception Type: {type(e)}\n"
-                error_message += f"Traceback: {traceback.format_exc()}"
-                messagebox.showerror("Error", error_message)
+
 
     def serialise_waza(self):
-        """
-        Serializes JSON into Yuke's WAZA
-        """
-        root = Tk()
-        root.withdraw()
-
         input_json_filename = filedialog.askopenfilename(
             title="Select JSON",
             filetypes=(("JSON Files", "*.json"), ("All Files", "*.*")),
         )
         if not input_json_filename:
-            print("No input file selected. Exiting.")
             return
 
         output_waza_filename = filedialog.asksaveasfilename(
@@ -349,30 +335,95 @@ class YMIT:
             filetypes=(("Yuke's Move Table Format", "*.dat"), ("All Files", "*.*")),
         )
         if not output_waza_filename:
-            print("No output file selected. Exiting.")
             return
 
         try:
             with open(input_json_filename, "r") as json_file:
                 data = json.load(json_file)
 
-            # Validate the integrity of `data`
-            if "moves" not in data or not isinstance(data["moves"], dict):
-                raise ValueError("Invalid JSON format: 'moves' should be a dictionary.")
+            moves = data.get("moves", {})
+            if not isinstance(moves, dict):
+                raise ValueError("'moves' must be a dictionary in the JSON schema.")
 
-            total_moves = int(data["total_moves"])
-            moves = data["moves"]
+            moves_list = list(moves.values())  # Extract the list of moves
+            total_moves = len(moves_list)
 
-            # Create a progress bar window
-            progress_window = Toplevel()
-            progress_window.title("Serialising WAZA")
-            progress_label = Label(progress_window, text="Serialising moves...")
-            progress_label.pack(pady=10)
-            progress_bar = Progressbar(progress_window, orient="horizontal", length=300, mode="determinate")
-            progress_bar.pack(padx=20, pady=20)
-            progress_bar["maximum"] = total_moves
+            # Dynamically calculate category counts based on category_names
+            category_names = [
+                "fighting_stances",
+                "taunts",
+                "unknown_2",
+                "unknown_3",
+                "unknown_4",
+                "unknown_5",
+                "unknown_6",
+                "unknown_7",
+                "unknown_8",
+                "unknown_9",
+                "unknown_10",
+                "unknown_11",
+                "unknown_12",
+                "unknown_13",
+                "unknown_14",
+                "unknown_15",
+                "unknown_16",
+                "unknown_17",
+                "unknown_18",
+                "unknown_19",
+                "unknown_20",
+                "unknown_21",
+                "unknown_22",
+                "unknown_23",
+                "unknown_24",
+                "unknown_25",
+                "unknown_26",
+                "unknown_27",
+                "unknown_28",
+                "unknown_29",
+                "unknown_30",
+                "unknown_31",
+                "unknown_32",
+                "unknown_33",
+                "unknown_34",
+                "unknown_35",
+                "unknown_36",
+                "unknown_37",
+                "unknown_38",
+                "unknown_39",
+                "unknown_40",
+                "unknown_41",
+                "unknown_42",
+                "unknown_43",
+                "unknown_44",
+                "unknown_45",
+                "unknown_46",
+                "unknown_47",
+                "unknown_48",
+                "unknown_49",
+                "unknown_50",
+                "unknown_51",
+                "unknown_52",
+                "unknown_53",
+                "unknown_54",
+                "unknown_55",
+                "unknown_56",
+                "unknown_57",
+                "unknown_58",
+                "unknown_59",
+                "unknown_60",
+                "unknown_61",
+                "unknown_62",
+                "unknown_63",
+            ]
 
-            progress_window.update()
+            category_counts = {name: 0 for name in category_names}
+            for move in moves_list:
+                if not isinstance(move, dict):
+                    continue  # Skip invalid moves that are not dictionaries
+                category_flags = move.get("category_flags", {})
+                for category, is_flag_set in category_flags.items():
+                    if category in category_counts and is_flag_set == "True":
+                        category_counts[category] += 1
 
             with open(output_waza_filename, "wb") as binary_file:
                 # Write header and pads
@@ -380,31 +431,38 @@ class YMIT:
                 binary_file.write(struct.pack("<H", total_moves))
                 binary_file.write(b"\x00\x00")
 
-                categories = data["categories"]
-                for category_name, category_value in categories.items():
-                    binary_file.write(struct.pack("<H", int(category_value)))
-                binary_file.write(struct.pack("<H", 0xFFFF))
+                # Serialise category counts in the order of category_names
+                for category in category_names:
+                    binary_file.write(struct.pack("<H", category_counts[category]))
+                binary_file.write(struct.pack("<H", 0xFFFF))  # End of category marker
 
-                for idx, (key, move) in enumerate(moves.items()):
+                for move in moves_list:
                     if not isinstance(move, dict):
-                        print(f"Skipping invalid move: {move}")
                         continue
 
                     binary_file.write(b"\xFF\xFF\xFF\xFF\xFF\xFF")
 
+                    # Handle category flags
                     category_flags = [0] * 16
-                    for category, is_flag_set in move.get("category_flags", {}).items():
-                        if is_flag_set == "True":
-                            category_index = list(categories.keys()).index(category)
+                    move_category_flags = move.get("category_flags", {})
+                    for category, is_flag_set in move_category_flags.items():
+                        if is_flag_set == "True" and category in category_names:
+                            category_index = category_names.index(category)
                             byte_index = category_index // 8
                             bit_position = category_index % 8
                             category_flags[byte_index] |= 1 << bit_position
                     binary_file.write(struct.pack("<16B", *category_flags))
 
+                    # Handle move name
                     move_name = move.get("name", "Unknown")
+                    if not isinstance(move_name, str):
+                        move_name = "Unknown"
                     binary_file.write(move_name.ljust(32, "\x00").encode("utf-8"))
 
+                    # Handle damage flags
                     damage_flags = move.get("damage_flags", {})
+                    if not isinstance(damage_flags, dict):
+                        damage_flags = {}
                     binary_file.write(
                         struct.pack(
                             "<3B",
@@ -414,24 +472,27 @@ class YMIT:
                         )
                     )
 
-                    parameters = move.get("parameters", {})
-                    parameter_values = [parameters.get(f"Item {i}", 0) for i in range(5)]
-                    binary_file.write(struct.pack("<5B", *parameter_values))
+                    # Handle parameters
+                    parameters = move.get("parameters", [0, 0, 0, 0, 0])
+                    if not isinstance(parameters, list) or len(parameters) != 5:
+                        parameters = [0, 0, 0, 0, 0]
+                    binary_file.write(struct.pack("<5B", *parameters))
 
-                    move_id = int(move.get("id", 0))
+                    # Handle move ID
+                    move_id = move.get("id", 0)
+                    if not isinstance(move_id, int):
+                        move_id = 0
                     binary_file.write(struct.pack("<H", move_id))
 
-                    # Update the progress bar
-                    progress_bar["value"] = idx + 1
-                    progress_window.update()
-
-            progress_window.destroy()
             messagebox.showinfo("Serialisation Complete", f"Output saved to {output_waza_filename}")
-            print(f"Serialisation complete. Output saved to {output_waza_filename}")
-
         except Exception as e:
-            messagebox.showerror("Error", f"An error occurred: {e}")
-            print(f"An error occurred: {e}")
+            messagebox.showerror("Error", str(e))
+
+
+
+
+
+
 
 
 if __name__ == "__main__":
