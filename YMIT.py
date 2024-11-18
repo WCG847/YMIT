@@ -488,8 +488,7 @@ SVR06_CATE_NAMES = [
 
 WWE14_CATE_NAMES = [
     "unknown_0",
-    "taunts"
-    "unknown_2",
+    "taunts" "unknown_2",
     "unknown_3",
     "unknown_4",
     "unknown_5",
@@ -914,6 +913,7 @@ class SVR05:
 
         return json.dumps(parsed_data, indent=4)
 
+
 class SVR06:
     @staticmethod
     def parse_waza(filename):
@@ -1043,6 +1043,7 @@ class SVR06:
 import struct
 import logging
 
+
 class WazaParser:
     @staticmethod
     def parse_waza(filename):
@@ -1086,7 +1087,9 @@ class WazaParser:
                     return HCTP.parse_waza(filename)
 
                 # If no known format is found
-                raise ValueError("Unknown format: Could not detect a valid WAZA file format.")
+                raise ValueError(
+                    "Unknown format: Could not detect a valid WAZA file format."
+                )
 
         except FileNotFoundError:
             raise FileNotFoundError(f"File {filename} not found.")
@@ -1094,7 +1097,6 @@ class WazaParser:
             raise RuntimeError(f"An error occurred while parsing the file: {str(e)}")
         finally:
             set_process_priority("NORMAL")
-
 
 
 class YMIT:
@@ -1328,7 +1330,9 @@ class YMIT:
                         set_process_priority("ABOVE_NORMAL")
                         parsed_value = json.loads(values[0])
                         # Ensure parsed_value is a valid type
-                        if isinstance(parsed_value, (dict, list, str, int, float, bool)):
+                        if isinstance(
+                            parsed_value, (dict, list, str, int, float, bool)
+                        ):
                             return parsed_value
                         else:
                             return None  # Invalid parsed value
@@ -1352,7 +1356,12 @@ class YMIT:
                     value = tree_to_structure(child)
 
                     # Handle edge cases where value might incorrectly default to "dict"
-                    if key == "category_flags" or key == "column_flags" and isinstance(value, str) and value == "dict":
+                    if (
+                        key == "category_flags"
+                        or key == "column_flags"
+                        and isinstance(value, str)
+                        and value == "dict"
+                    ):
                         value = {}  # Replace with an empty dictionary
                     elif value is None:
                         # Default to an empty structure based on the parent's structure
@@ -1376,8 +1385,6 @@ class YMIT:
                 messagebox.showerror("Error", str(e))
             finally:
                 set_process_priority("NORMAL")
-
-
 
     def serialise_waza(self):
         category_names = SVR_HCTP_CATE_NAMES
@@ -1425,25 +1432,28 @@ class YMIT:
             # Preprocess moves to clean up invalid "category_flags"
             for move_key, move in moves.items():
                 if move.get("category_flags") == "dict":
-                    print(f"Replacing 'dict' with {{}} in category_flags for move: {move_key}")
+                    print(
+                        f"Replacing 'dict' with {{}} in category_flags for move: {move_key}"
+                    )
                     move["category_flags"] = {}
 
             for move in moves_list:
                 # Get category_flags with validation
                 category_flags = move.get("category_flags", {})
-    
+
                 if category_flags == "dict":  # Handle literal "dict" as a string
                     print(f"Fixing invalid category_flags for move: {move}")
                     category_flags = {}
-    
+
                 if not isinstance(category_flags, dict):
-                    raise ValueError(f"Expected 'category_flags' to be a dictionary, got {type(category_flags).__name__}: {category_flags}")
-    
+                    raise ValueError(
+                        f"Expected 'category_flags' to be a dictionary, got {type(category_flags).__name__}: {category_flags}"
+                    )
+
                 # Process valid category_flags
                 for category, is_flag_set in category_flags.items():
                     if category in category_counts and is_flag_set == "True":
                         category_counts[category] += 1
-
 
             with open(output_waza_filename, "wb") as binary_file:
                 # Write header and pads
