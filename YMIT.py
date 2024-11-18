@@ -486,6 +486,172 @@ SVR06_CATE_NAMES = [
     "unknown_63",
 ]
 
+WWE14_CATE_NAMES = [
+    "unknown_0",
+    "taunts"
+    "unknown_2",
+    "unknown_3",
+    "unknown_4",
+    "unknown_5",
+    "unknown_6",
+    "unknown_7",
+    "unknown_8",
+    "unknown_9",
+    "unknown_10",
+    "unknown_11",
+    "unknown_12",
+    "unknown_13",
+    "unknown_14",
+    "unknown_15",
+    "unknown_16",
+    "unknown_17",
+    "unknown_18",
+    "unknown_19",
+    "unknown_20",
+    "unknown_21",
+    "unknown_22",
+    "unknown_23",
+    "unknown_24",
+    "unknown_25",
+    "unknown_26",
+    "unknown_27",
+    "unknown_28",
+    "unknown_29",
+    "unknown_30",
+    "unknown_31",
+    "unknown_32",
+    "unknown_33",
+    "unknown_34",
+    "unknown_35",
+    "unknown_36",
+    "unknown_37",
+    "unknown_38",
+    "unknown_39",
+    "unknown_40",
+    "unknown_41",
+    "unknown_42",
+    "unknown_43",
+    "unknown_44",
+    "unknown_45",
+    "unknown_46",
+    "unknown_47",
+    "unknown_48",
+    "unknown_49",
+    "unknown_50",
+    "unknown_51",
+    "unknown_52",
+    "unknown_53",
+    "unknown_54",
+    "unknown_55",
+    "unknown_56",
+    "unknown_57",
+    "unknown_58",
+    "unknown_59",
+    "unknown_60",
+    "unknown_61",
+    "unknown_62",
+    "unknown_63",
+    "unknown_64",
+    "unknown_65",
+    "unknown_66",
+    "unknown_67",
+    "unknown_68",
+    "unknown_69",
+    "unknown_70",
+    "unknown_71",
+    "unknown_72",
+    "unknown_73",
+    "unknown_74",
+    "unknown_75",
+    "unknown_76",
+    "unknown_77",
+    "unknown_78",
+    "unknown_79",
+    "unknown_80",
+    "unknown_81",
+    "unknown_82",
+    "unknown_83",
+    "unknown_84",
+    "unknown_85",
+    "unknown_86",
+    "unknown_87",
+    "unknown_88",
+    "unknown_89",
+    "unknown_90",
+    "unknown_91",
+    "unknown_92",
+    "unknown_93",
+    "unknown_94",
+    "unknown_95",
+    "unknown_96",
+    "unknown_97",
+    "unknown_98",
+    "unknown_99",
+    "unknown_100",
+    "unknown_101",
+    "unknown_102",
+    "unknown_103",
+    "unknown_104",
+    "unknown_105",
+    "unknown_106",
+    "unknown_107",
+    "unknown_108",
+    "unknown_109",
+    "unknown_110",
+    "unknown_111",
+    "unknown_112",
+    "unknown_113",
+    "unknown_114",
+    "unknown_115",
+    "unknown_116",
+    "unknown_117",
+    "unknown_118",
+    "unknown_119",
+    "unknown_120",
+    "unknown_121",
+    "unknown_122",
+    "unknown_123",
+    "unknown_124",
+    "unknown_125",
+    "unknown_126",
+    "unknown_127",
+    "unknown_128",
+    "unknown_129",
+    "unknown_130",
+    "unknown_131",
+    "unknown_132",
+    "unknown_133",
+    "unknown_134",
+    "unknown_135",
+    "unknown_136",
+    "unknown_137",
+    "unknown_138",
+    "unknown_139",
+    "unknown_140",
+    "unknown_141",
+    "unknown_142",
+    "unknown_143",
+    "unknown_144",
+    "unknown_145",
+    "unknown_146",
+    "unknown_147",
+    "unknown_148",
+    "unknown_149",
+    "unknown_150",
+    "unknown_151",
+    "unknown_152",
+    "unknown_153",
+    "unknown_154",
+    "unknown_155",
+    "unknown_156",
+    "unknown_157",
+    "unknown_158",
+    "unknown_159",
+    "unknown_160",
+    "unknown_161",
+    "unknown_162",
+]
+
 COLUMN_FLAG_MAP = {
     0x01: "GY BACK",
     0x02: "Upper Ground",
@@ -1154,26 +1320,44 @@ class YMIT:
         def tree_to_structure(parent=""):
             children = self.treeview.get_children(parent)
 
+            # If there are no children, process the current item
             if not children:
                 values = self.treeview.item(parent, "values")
                 if values and values[0]:
                     try:
                         set_process_priority("ABOVE_NORMAL")
-                        return json.loads(values[0])
+                        parsed_value = json.loads(values[0])
+                        # Ensure parsed_value is a valid type
+                        if isinstance(parsed_value, (dict, list, str, int, float, bool)):
+                            return parsed_value
+                        else:
+                            return None  # Invalid parsed value
                     except json.JSONDecodeError:
-                        return values[0]
-                    return None
+                        return values[0]  # Return raw value if not JSON-parsable
+                return None
 
+            # If there are children, decide the structure
             first_child_values = self.treeview.item(children[0], "values")
             if first_child_values and first_child_values[0] == "list_item":
+                # Return a list if the first child is marked as a list
                 return [tree_to_structure(child) for child in children]
             else:
+                # Otherwise, build a dictionary
                 result = {}
                 for child in children:
                     key = self.treeview.item(child, "text")
                     if key == "categories" or key == "total_moves":
-                        continue
+                        continue  # Skip unwanted keys
+
                     value = tree_to_structure(child)
+
+                    # Handle edge cases where value might incorrectly default to "dict"
+                    if key == "category_flags" or key == "column_flags" and isinstance(value, str) and value == "dict":
+                        value = {}  # Replace with an empty dictionary
+                    elif value is None:
+                        # Default to an empty structure based on the parent's structure
+                        value = {} if key.endswith("_flags") else []
+
                     result[key] = value
                 return result
 
@@ -1184,16 +1368,16 @@ class YMIT:
         )
         if filename:
             try:
-
                 data = tree_to_structure()
                 with open(filename, "w") as f:
-                    json.dump(data, f, indent=4)
+                    json.dump(data, f, indent=4)  # Save JSON data to file
                 messagebox.showinfo("Success", "File saved successfully.")
             except Exception as e:
                 messagebox.showerror("Error", str(e))
-
             finally:
                 set_process_priority("NORMAL")
+
+
 
     def serialise_waza(self):
         category_names = SVR_HCTP_CATE_NAMES
