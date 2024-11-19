@@ -1355,17 +1355,14 @@ class YMIT:
 
                     value = tree_to_structure(child)
 
-                    # Handle edge cases where value might incorrectly default to "dict"
-                    if (
-                        key == "category_flags"
-                        or key == "column_flags"
-                        and isinstance(value, str)
-                        and value == "dict"
-                    ):
-                        value = {}  # Replace with an empty dictionary
-                    elif value is None:
-                        # Default to an empty structure based on the parent's structure
-                        value = {} if key.endswith("_flags") else []
+                    # Fix category_flags or column_flags during reconstruction
+                    if key == "category_flags" or key == "column_flags":
+                        if isinstance(value, str) and value in ("dict", "{}"):
+                            # Reconstruct category_flags as an empty dictionary
+                            value = {}
+                        elif isinstance(value, list):
+                            # Handle unexpected structures (e.g., list instead of dict)
+                            value = {f"flag_{i}": flag for i, flag in enumerate(value)}
 
                     result[key] = value
                 return result
