@@ -784,6 +784,7 @@ SVR11_CATE_NAMES = [
 ]
 
 COLUMN_FLAG_MAP = {
+    0x00: "GY FRONT",
     0x01: "GY BACK",
     0x02: "Upper Ground",
     0x03: "Lower Ground",
