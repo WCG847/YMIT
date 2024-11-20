@@ -488,7 +488,7 @@ SVR06_CATE_NAMES = [
 
 WWE14_CATE_NAMES = [
     "unknown_0",
-    "taunts", 
+    "taunts",
     "unknown_2",
     "unknown_3",
     "unknown_4",
@@ -669,6 +669,7 @@ COLUMN_FLAG_MAP = {
     0x0E: "Running",
 }
 
+
 class SYM:
     @staticmethod
     def parse_waza(filename):
@@ -725,6 +726,8 @@ class SYM:
             set_process_priority("NORMAL")
 
         return json.dumps(parsed_data, indent=4)
+
+
 class HCTP:
     @staticmethod
     def parse_waza(filename):
@@ -1470,6 +1473,10 @@ class YMIT:
 
             # Convert dictionary values to a list of moves
             moves_list = list(moves.values())
+            # Sort moves alphabetically by 'name'
+            moves_list = sorted(
+                moves_list, key=lambda move: move.get("name", "").lower()
+            )
             total_moves = len(moves_list)
 
             # Determine format from the parsed JSON header
