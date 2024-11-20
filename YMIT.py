@@ -652,6 +652,137 @@ WWE14_CATE_NAMES = [
     "unknown_162",
 ]
 
+SVR11_CATE_NAMES = [
+    "unknown_0",
+    "taunts",
+    "unknown_2",
+    "unknown_3",
+    "unknown_4",
+    "unknown_5",
+    "unknown_6",
+    "unknown_7",
+    "unknown_8",
+    "unknown_9",
+    "unknown_10",
+    "unknown_11",
+    "unknown_12",
+    "unknown_13",
+    "unknown_14",
+    "unknown_15",
+    "unknown_16",
+    "unknown_17",
+    "unknown_18",
+    "unknown_19",
+    "unknown_20",
+    "unknown_21",
+    "unknown_22",
+    "unknown_23",
+    "unknown_24",
+    "unknown_25",
+    "unknown_26",
+    "unknown_27",
+    "unknown_28",
+    "unknown_29",
+    "unknown_30",
+    "unknown_31",
+    "unknown_32",
+    "unknown_33",
+    "unknown_34",
+    "unknown_35",
+    "unknown_36",
+    "unknown_37",
+    "unknown_38",
+    "unknown_39",
+    "unknown_40",
+    "unknown_41",
+    "unknown_42",
+    "unknown_43",
+    "unknown_44",
+    "unknown_45",
+    "unknown_46",
+    "unknown_47",
+    "unknown_48",
+    "unknown_49",
+    "unknown_50",
+    "unknown_51",
+    "unknown_52",
+    "unknown_53",
+    "unknown_54",
+    "unknown_55",
+    "unknown_56",
+    "unknown_57",
+    "unknown_58",
+    "unknown_59",
+    "unknown_60",
+    "unknown_61",
+    "unknown_62",
+    "unknown_63",
+    "unknown_64",
+    "unknown_65",
+    "unknown_66",
+    "unknown_67",
+    "unknown_68",
+    "unknown_69",
+    "unknown_70",
+    "unknown_71",
+    "unknown_72",
+    "unknown_73",
+    "unknown_74",
+    "unknown_75",
+    "unknown_76",
+    "unknown_77",
+    "unknown_78",
+    "unknown_79",
+    "unknown_80",
+    "unknown_81",
+    "unknown_82",
+    "unknown_83",
+    "unknown_84",
+    "unknown_85",
+    "unknown_86",
+    "unknown_87",
+    "unknown_88",
+    "unknown_89",
+    "unknown_90",
+    "unknown_91",
+    "unknown_92",
+    "unknown_93",
+    "unknown_94",
+    "unknown_95",
+    "unknown_96",
+    "unknown_97",
+    "unknown_98",
+    "unknown_99",
+    "unknown_100",
+    "unknown_101",
+    "unknown_102",
+    "unknown_103",
+    "unknown_104",
+    "unknown_105",
+    "unknown_106",
+    "unknown_107",
+    "unknown_108",
+    "unknown_109",
+    "unknown_110",
+    "unknown_111",
+    "unknown_112",
+    "unknown_113",
+    "unknown_114",
+    "unknown_115",
+    "unknown_116",
+    "unknown_117",
+    "unknown_118",
+    "unknown_119",
+    "unknown_120",
+    "unknown_121",
+    "unknown_122",
+    "unknown_123",
+    "unknown_124",
+    "unknown_125",
+    "unknown_126",
+    "unknown_127",
+]
+
 COLUMN_FLAG_MAP = {
     0x01: "GY BACK",
     0x02: "Upper Ground",
@@ -1098,9 +1229,136 @@ class SVR06:
 
         return json.dumps(parsed_data, indent=4)
 
+class SVR11:
+    @staticmethod
+    def parse_waza(filename):
+        """
+        Parses Yuke's Format
+        -
+        """
+        category_names = SVR11_CATE_NAMES
+        column_flag_map = COLUMN_FLAG_MAP
+        set_process_priority("ABOVE_NORMAL")
 
-import struct
-import logging
+        if not filename.endswith(".dat"):
+            raise ValueError("File must be of type '.DAT'")
+
+        parsed_data = {"header": None, "total_moves": 0, "categories": {}, "moves": []}
+
+        try:
+            with open(filename, "rb") as file:
+
+                raw_bytes = file.read(2)
+                if raw_bytes == b"\xFF\x00":
+                    magic_header = 0xFF00
+                else:
+                    magic_header = struct.unpack("<H", raw_bytes)[0]
+
+                if magic_header != 0xFF00:
+                    raise ValueError("Illegal Format: Invalid Magic")
+                    logging.error("Illegal Magic Header")
+
+                parsed_data["header"] = "SVR11"
+
+                # Skip padding
+                file.read(2)
+
+                # Total Move Count
+                total_moves = struct.unpack("<H", file.read(2))[0]
+                parsed_data["total_moves"] = total_moves
+
+                # Yet another padding to skip...
+                file.read(2)
+
+                # Read category table sector
+                categories = {}
+                for i in range(128):  # There are 128 Categories.
+                    category_value = struct.unpack("<H", file.read(2))[0]
+                    if category_value == 0xFFFF:  # EOCM (End of Category Marker)
+                        break
+                    elif i < len(category_names):
+                        categories[category_names[i]] = category_value
+
+                parsed_data["categories"] = categories
+
+                # Skip EOCM
+                file.read(2)
+                # Read move table sector
+                for move_index in range(total_moves):
+                    move_index_block = {}
+
+                    header = file.read(6)
+                    if (
+                        header != b"\xFF\xFF\xFF\xFF\xFF\xFF"
+                    ):  # Not sure if its a header or unused flag, but it's never not 0xFF
+                        raise ValueError(f"Invalid move header. Got {header}")
+                    # Category flags (UINT8, 0x10 long, split into 128 bits)
+                    category_flags = struct.unpack("<16B", file.read(16))
+                    move_index_block["category_flags"] = {
+                        category_names[i]: bool(category_flags[i // 8] & (1 << (i % 8)))
+                        for i in range(128)
+                        if bool(
+                            category_flags[i // 8]
+                            & (1 << (i % 8))  # Only display categories set to True
+                        )
+                    }
+
+                    move_name = file.read(96).decode("utf-8")
+                    move_index_block["name"] = sanitise_move_name(move_name)
+
+                    damage_flags = struct.unpack("<10B", file.read(10))
+                    move_index_block["damage_flags"] = {
+                        "unk1": damage_flags[0],
+                        "unk2": damage_flags[1],
+                        "unk3": damage_flags[2],
+                        "unk4": damage_flags[3],
+                        "unk5": damage_flags[4],
+                        "unk6": damage_flags[5],
+                        "unk7": damage_flags[6],
+                        "unk8": damage_flags[7],
+                        "unk9": damage_flags[8],
+                        "exclusive_id": damage_flags[9]
+                    }
+
+
+                    # Extract parameters
+                    parameters = file.read(21)
+                    column_flag_byte = parameters[0]
+                    column_flags = (
+                        {column_flag_map[column_flag_byte]: True}
+                        if column_flag_byte in column_flag_map
+                        else {}
+                    )
+                    if not isinstance(
+                        column_flags, dict
+                    ):  # Ensure column_flags is a dictionary
+                        column_flags = {}  # Default to an empty dictionary
+                    move_index_block["column_flags"] = column_flags
+
+                    # Exclude the first byte and extract unlock_id
+                    unlock_id = parameters[11]
+                    unlock_id_2 = parameters[12]
+                    move_index_block["unlock_id"] = unlock_id
+                    move_index_block["unlock_id_2"] = unlock_id_2
+                    move_index_block["parameters"] = [
+                        int(b) for b in parameters[3:]  # Remaining bytes (if any)
+                    ]
+
+                    move_index_id = struct.unpack("<H", file.read(2))[0]
+                    move_index_block["id"] = int(move_index_id)  # Convert to decimal
+
+                    parsed_data["moves"].append(move_index_block)
+
+        except FileNotFoundError:
+            raise FileNotFoundError(f"File {filename} not found.")
+        except Exception as e:
+            raise RuntimeError(f"An error occurred while parsing the file: {str(e)}")
+
+        finally:
+            # After parsing, reset the process priority to NORMAL
+            set_process_priority("NORMAL")
+
+        return json.dumps(parsed_data, indent=4)
 
 
 class WazaParser:
