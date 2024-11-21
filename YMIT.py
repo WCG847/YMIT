@@ -1835,7 +1835,7 @@ class YMIT:
                             damage_flags.get("exclusive_id", 0),
                         )
                     )
-                    if format_header == "SVR05":
+                    if format_header == "SVR05" or format_header == "HCTP":
                         # Handle column flags and parameters
                         column_flag_byte = 0x00
                         column_flags = move.get("column_flags", {})
