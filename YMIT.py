@@ -859,95 +859,135 @@ class SYM:
 
         return json.dumps(parsed_data, indent=4)
 
-def read_magic_header(file, expected_header):
-    """
-    Reads and validates the magic header of the file.
-    """
-    raw_bytes = file.read(2)
-    magic_header = struct.unpack("<H", raw_bytes)[0]
-    if magic_header != expected_header:
-        raise ValueError("Illegal Format: Invalid Magic Header")
-    return magic_header
 
-def read_category_flags(file, num_categories, category_names):
-    """
-    Reads category flags and maps them to category names.
-    """
-    category_flags = struct.unpack("<16B", file.read(16))
-    return {
-        category_names[i]: bool(category_flags[i // 8] & (1 << (i % 8)))
-        for i in range(num_categories)
-        if bool(category_flags[i // 8] & (1 << (i % 8)))
-    }
-
-def read_damage_flags(file):
-    """
-    Reads damage flag details from the file.
-    """
-    damage_flags = struct.unpack("<3B", file.read(3))
-    return {
-        "unknown_flag": damage_flags[0],
-        "damage_value": damage_flags[1],
-        "exclusive_id": damage_flags[2],
-    }
-
-def read_parameters(file, column_flag_map):
-    """
-    Reads and parses the parameters for a move.
-    """
-    parameters = file.read(5)
-    column_flag_byte = parameters[0]
-    column_flags = (
-        {column_flag_map[column_flag_byte]: True}
-        if column_flag_byte in column_flag_map
-        else {}
-    )
-    return {
-        "column_flags": column_flags,
-        "unlock_id": parameters[1],
-        "unlock_id_2": parameters[2],
-        "parameters": [int(b) for b in parameters[3:]],
-    }
-
-def parse_move(file, num_categories, category_names, column_flag_map, move_name_length):
-    """
-    Parses a single move from the file.
-    """
-    move_index_block = {}
-
-    header = file.read(6)
-    if header != b"\xFF\xFF\xFF\xFF\xFF\xFF":
-        raise ValueError(f"Invalid move header. Got {header}")
-    
-    move_index_block["category_flags"] = read_category_flags(file, num_categories, category_names)
-
-    move_name = file.read(move_name_length).decode("utf-8").strip("\x00")
-    move_index_block["name"] = move_name
-
-    move_index_block["damage_flags"] = read_damage_flags(file)
-
-    params = read_parameters(file, column_flag_map)
-    move_index_block.update(params)
-
-    move_index_id = struct.unpack("<H", file.read(2))[0]
-    move_index_block["id"] = int(move_index_id)
-
-    return move_index_block
-
-class MoveParser:
-    """
-    Base class for move parsers to share common logic.
-    """
-    EXPECTED_HEADER = 0xFF00
-    CATEGORY_NAMES = []
-    COLUMN_FLAG_MAP = {}
-    MOVE_NAME_LENGTH = 32
-
-    @classmethod
-    def parse_waza(cls, filename):
+class HCTP:
+    @staticmethod
+    def parse_waza(filename):
         """
-        Parses a move file specific to the subclass game version.
+        Parses HCTP Move Format
         """
+        category_names = SVR_HCTP_CATE_NAMES
+        column_flag_map = COLUMN_FLAG_MAP
+
+        set_process_priority("ABOVE_NORMAL")
+
+        if not filename.endswith(".dat"):
+            raise ValueError("File must be of type '.DAT'")
+
+        parsed_data = {"header": None, "total_moves": 0, "moves": []}
+
+        try:
+            with open(filename, "rb") as file:
+                # Read and validate the magic header
+                raw_bytes = file.read(2)
+                if raw_bytes == b"\xFF\x00":
+                    magic_header = 0xFF00
+                else:
+                    magic_header = struct.unpack("<H", raw_bytes)[0]
+
+                if magic_header != 0xFF00:
+                    raise ValueError("Illegal Format: Invalid Magic")
+                    logging.error("Illegal Magic Header")
+
+                parsed_data["header"] = "HCTP"
+
+                # Skip padding
+                file.read(2)
+
+                # Total Move Count
+                total_moves = struct.unpack("<H", file.read(2))[0]
+                parsed_data["total_moves"] = total_moves
+
+                # Skip the next padding bytes
+                file.read(10)
+
+                # Start reading the move table sector directly
+                for move_index in range(total_moves):
+                    move_index_block = {}
+
+                    if move_index == 0:
+                        # First move has no header, starts directly with category flags
+                        category_flags = struct.unpack("<16B", file.read(16))
+                    else:
+                        # Subsequent moves have a header
+                        header = file.read(6)
+                        if header != b"\xFF\xFF\xFF\xFF\xFF\xFF":
+                            raise ValueError(
+                                f"Invalid move header at index {move_index}"
+                            )
+                        category_flags = struct.unpack("<16B", file.read(16))
+
+                    # Category flags (UINT8, 0x10 long, split into 64 bits)
+                    move_index_block["category_flags"] = {
+                        category_names[i]: bool(category_flags[i // 8] & (1 << (i % 8)))
+                        for i in range(64)
+                        if bool(
+                            category_flags[i // 8]
+                            & (1 << (i % 8))  # Only display categories set to True
+                        )
+                    }
+
+                    move_name = file.read(32).decode("utf-8")
+                    move_index_block["name"] = sanitise_move_name(move_name)
+
+                    damage_flags = struct.unpack("<3B", file.read(3))
+                    move_index_block["damage_flags"] = {
+                        "unknown_flag": damage_flags[0],
+                        "damage_value": damage_flags[1],
+                        "exclusive_id": damage_flags[  # Which wrestler the move depends on.
+                            2
+                        ],
+                    }
+
+                    # Extract parameters
+                    parameters = file.read(5)
+                    column_flag_byte = parameters[0]
+                    column_flags = (
+                        {column_flag_map[column_flag_byte]: True}
+                        if column_flag_byte in column_flag_map
+                        else {}
+                    )
+                    if not isinstance(
+                        column_flags, dict
+                    ):  # Ensure column_flags is a dictionary
+                        column_flags = {}  # Default to an empty dictionary
+                    move_index_block["column_flags"] = column_flags
+
+                    # Exclude the first byte and extract unlock_id
+                    unlock_id = parameters[1]
+                    unlock_id_2 = parameters[2]
+                    move_index_block["unlock_id"] = unlock_id
+                    move_index_block["unlock_id_2"] = unlock_id_2
+                    move_index_block["parameters"] = [
+                        int(b) for b in parameters[3:]  # Remaining bytes (if any)
+                    ]
+
+                    move_index_id = struct.unpack("<H", file.read(2))[0]
+                    move_index_block["id"] = int(move_index_id)  # Convert to decimal
+
+                    parsed_data["moves"].append(move_index_block)
+
+        except FileNotFoundError:
+            raise FileNotFoundError(f"File {filename} not found.")
+        except Exception as e:
+            raise RuntimeError(f"An error occurred while parsing the file: {str(e)}")
+
+        finally:
+            # After parsing, reset the process priority to NORMAL
+            set_process_priority("NORMAL")
+
+        return json.dumps(parsed_data, indent=4)
+
+
+class SVR05:
+    @staticmethod
+    def parse_waza(filename):
+        """
+        Parses Yuke's Format
+        -
+        """
+        category_names = SVR_HCTP_CATE_NAMES
+        column_flag_map = COLUMN_FLAG_MAP
         set_process_priority("ABOVE_NORMAL")
 
         if not filename.endswith(".dat"):
@@ -957,74 +997,369 @@ class MoveParser:
 
         try:
             with open(filename, "rb") as file:
-                # Validate magic header
-                parsed_data["header"] = cls.read_and_validate_header(file)
 
-                # Skip padding and read total moves
+                raw_bytes = file.read(2)
+                if raw_bytes == b"\xFF\x00":
+                    magic_header = 0xFF00
+                else:
+                    magic_header = struct.unpack("<H", raw_bytes)[0]
+
+                if magic_header != 0xFF00:
+                    raise ValueError("Illegal Format: Invalid Magic")
+                    logging.error("Illegal Magic Header")
+
+                parsed_data["header"] = "SVR05"
+
+                # Skip padding
                 file.read(2)
+
+                # Total Move Count
                 total_moves = struct.unpack("<H", file.read(2))[0]
                 parsed_data["total_moves"] = total_moves
 
-                # Skip additional padding
+                # Yet another padding to skip...
                 file.read(2)
 
-                # Read categories if applicable
-                if cls.CATEGORY_NAMES:
-                    categories = cls.read_categories(file)
-                    parsed_data["categories"] = categories
+                # Read category table sector
+                categories = {}
+                for i in range(64):  # There are 64 Categories.
+                    category_value = struct.unpack("<H", file.read(2))[0]
+                    if category_value == 0xFFFF:  # EOCM (End of Category Marker)
+                        break
+                    elif i < len(category_names):
+                        categories[category_names[i]] = category_value
 
-                # Parse moves
-                for _ in range(total_moves):
-                    move = parse_move(file, len(cls.CATEGORY_NAMES), cls.CATEGORY_NAMES, cls.COLUMN_FLAG_MAP, cls.MOVE_NAME_LENGTH)
-                    parsed_data["moves"].append(move)
+                parsed_data["categories"] = categories
+
+                # Skip EOCM
+                file.read(2)
+                # Read move table sector
+                for move_index in range(total_moves):
+                    move_index_block = {}
+
+                    header = file.read(6)
+                    if (
+                        header != b"\xFF\xFF\xFF\xFF\xFF\xFF"
+                    ):  # Not sure if its a header or unused flag, but it's never not 0xFF
+                        raise ValueError(f"Invalid move header. Got {header}")
+                    # Category flags (UINT8, 0x10 long, split into 64 bits)
+                    category_flags = struct.unpack("<16B", file.read(16))
+                    move_index_block["category_flags"] = {
+                        category_names[i]: bool(category_flags[i // 8] & (1 << (i % 8)))
+                        for i in range(64)
+                        if bool(
+                            category_flags[i // 8]
+                            & (1 << (i % 8))  # Only display categories set to True
+                        )
+                    }
+
+                    move_name = file.read(32).decode("utf-8")
+                    move_index_block["name"] = sanitise_move_name(move_name)
+
+                    damage_flags = struct.unpack("<3B", file.read(3))
+                    move_index_block["damage_flags"] = {
+                        "unknown_flag": damage_flags[0],
+                        "damage_value": damage_flags[1],
+                        "exclusive_id": damage_flags[  # Which wrestler the move depends on.
+                            2
+                        ],
+                    }
+
+                    # Extract parameters
+                    parameters = file.read(5)
+                    column_flag_byte = parameters[0]
+                    column_flags = (
+                        {column_flag_map[column_flag_byte]: True}
+                        if column_flag_byte in column_flag_map
+                        else {}
+                    )
+                    if not isinstance(
+                        column_flags, dict
+                    ):  # Ensure column_flags is a dictionary
+                        column_flags = {}  # Default to an empty dictionary
+                    move_index_block["column_flags"] = column_flags
+
+                    # Exclude the first byte and extract unlock_id
+                    unlock_id = parameters[1]
+                    unlock_id_2 = parameters[2]
+                    move_index_block["unlock_id"] = unlock_id
+                    move_index_block["unlock_id_2"] = unlock_id_2
+                    move_index_block["parameters"] = [
+                        int(b) for b in parameters[3:]  # Remaining bytes (if any)
+                    ]
+
+                    move_index_id = struct.unpack("<H", file.read(2))[0]
+                    move_index_block["id"] = int(move_index_id)  # Convert to decimal
+
+                    parsed_data["moves"].append(move_index_block)
 
         except FileNotFoundError:
             raise FileNotFoundError(f"File {filename} not found.")
         except Exception as e:
             raise RuntimeError(f"An error occurred while parsing the file: {str(e)}")
+
         finally:
+            # After parsing, reset the process priority to NORMAL
             set_process_priority("NORMAL")
 
         return json.dumps(parsed_data, indent=4)
 
-    @classmethod
-    def read_and_validate_header(cls, file):
+
+class SVR06:
+    @staticmethod
+    def parse_waza(filename):
         """
-        Reads and validates the file header.
+        Parses Yuke's Format
+        -
         """
-        return read_magic_header(file, cls.EXPECTED_HEADER)
+        category_names = SVR06_CATE_NAMES
+        column_flag_map = COLUMN_FLAG_MAP
+        set_process_priority("ABOVE_NORMAL")
 
-    @classmethod
-    def read_categories(cls, file):
+        if not filename.endswith(".dat"):
+            raise ValueError("File must be of type '.DAT'")
+
+        parsed_data = {"header": None, "total_moves": 0, "categories": {}, "moves": []}
+
+        try:
+            with open(filename, "rb") as file:
+
+                raw_bytes = file.read(2)
+                if raw_bytes == b"\xFF\x00":
+                    magic_header = 0xFF00
+                else:
+                    magic_header = struct.unpack("<H", raw_bytes)[0]
+
+                if magic_header != 0xFF00:
+                    raise ValueError("Illegal Format: Invalid Magic")
+                    logging.error("Illegal Magic Header")
+
+                parsed_data["header"] = "SVR06"
+
+                # Skip padding
+                file.read(2)
+
+                # Total Move Count
+                total_moves = struct.unpack("<H", file.read(2))[0]
+                parsed_data["total_moves"] = total_moves
+
+                # Yet another padding to skip...
+                file.read(2)
+
+                # Read category table sector
+                categories = {}
+                for i in range(64):  # There are 64 Categories.
+                    category_value = struct.unpack("<H", file.read(2))[0]
+                    if category_value == 0xFFFF:  # EOCM (End of Category Marker)
+                        break
+                    elif i < len(category_names):
+                        categories[category_names[i]] = category_value
+
+                parsed_data["categories"] = categories
+
+                # Skip EOCM
+                file.read(2)
+                # Read move table sector
+                for move_index in range(total_moves):
+                    move_index_block = {}
+
+                    header = file.read(6)
+                    if (
+                        header != b"\xFF\xFF\xFF\xFF\xFF\xFF"
+                    ):  # Not sure if its a header or unused flag, but it's never not 0xFF
+                        raise ValueError(f"Invalid move header. Got {header}")
+                    # Category flags (UINT8, 0x10 long, split into 64 bits)
+                    category_flags = struct.unpack("<16B", file.read(16))
+                    move_index_block["category_flags"] = {
+                        category_names[i]: bool(category_flags[i // 8] & (1 << (i % 8)))
+                        for i in range(64)
+                        if bool(
+                            category_flags[i // 8]
+                            & (1 << (i % 8))  # Only display categories set to True
+                        )
+                    }
+
+                    move_name = file.read(96).decode("utf-8")
+                    move_index_block["name"] = sanitise_move_name(move_name)
+
+                    damage_flags = struct.unpack("<3B", file.read(3))
+                    move_index_block["damage_flags"] = {
+                        "unknown_flag": damage_flags[0],
+                        "damage_value": damage_flags[1],
+                        "exclusive_id": damage_flags[  # Which wrestler the move depends on.
+                            2
+                        ],
+                    }
+
+                    # Extract parameters
+                    parameters = file.read(21)
+                    column_flag_byte = parameters[0]
+                    column_flags = (
+                        {column_flag_map[column_flag_byte]: True}
+                        if column_flag_byte in column_flag_map
+                        else {}
+                    )
+                    if not isinstance(
+                        column_flags, dict
+                    ):  # Ensure column_flags is a dictionary
+                        column_flags = {}  # Default to an empty dictionary
+                    move_index_block["column_flags"] = column_flags
+
+                    # Exclude the first byte and extract unlock_id
+                    unlock_id = parameters[11]
+                    unlock_id_2 = parameters[12]
+                    move_index_block["unlock_id"] = unlock_id
+                    move_index_block["unlock_id_2"] = unlock_id_2
+                    move_index_block["parameters"] = [
+                        int(b) for b in parameters[3:]  # Remaining bytes (if any)
+                    ]
+
+                    move_index_id = struct.unpack("<H", file.read(2))[0]
+                    move_index_block["id"] = int(move_index_id)  # Convert to decimal
+
+                    parsed_data["moves"].append(move_index_block)
+
+        except FileNotFoundError:
+            raise FileNotFoundError(f"File {filename} not found.")
+        except Exception as e:
+            raise RuntimeError(f"An error occurred while parsing the file: {str(e)}")
+
+        finally:
+            # After parsing, reset the process priority to NORMAL
+            set_process_priority("NORMAL")
+
+        return json.dumps(parsed_data, indent=4)
+
+class SVR11:
+    @staticmethod
+    def parse_waza(filename):
         """
-        Reads category values from the file.
+        Parses Yuke's Format
+        -
         """
-        categories = {}
-        for i in range(len(cls.CATEGORY_NAMES)):
-            category_value = struct.unpack("<H", file.read(2))[0]
-            if category_value == 0xFFFF:
-                break
-            categories[cls.CATEGORY_NAMES[i]] = category_value
-        file.read(2)  # Skip EOCM
-        return categories
+        category_names = SVR11_CATE_NAMES
+        column_flag_map = COLUMN_FLAG_MAP
+        set_process_priority("ABOVE_NORMAL")
 
-class HCTP(MoveParser):
-    CATEGORY_NAMES = SVR_HCTP_CATE_NAMES
-    COLUMN_FLAG_MAP = COLUMN_FLAG_MAP
+        if not filename.endswith(".dat"):
+            raise ValueError("File must be of type '.DAT'")
 
-class SVR05(MoveParser):
-    CATEGORY_NAMES = SVR_HCTP_CATE_NAMES
-    COLUMN_FLAG_MAP = COLUMN_FLAG_MAP
+        parsed_data = {"header": None, "total_moves": 0, "categories": {}, "moves": []}
 
-class SVR06(MoveParser):
-    CATEGORY_NAMES = SVR06_CATE_NAMES
-    COLUMN_FLAG_MAP = COLUMN_FLAG_MAP
-    MOVE_NAME_LENGTH = 96
+        try:
+            with open(filename, "rb") as file:
 
-class SVR11(MoveParser):
-    CATEGORY_NAMES = SVR11_CATE_NAMES
-    COLUMN_FLAG_MAP = COLUMN_FLAG_MAP
-    MOVE_NAME_LENGTH = 96
+                raw_bytes = file.read(2)
+                if raw_bytes == b"\xFF\x00":
+                    magic_header = 0xFF00
+                else:
+                    magic_header = struct.unpack("<H", raw_bytes)[0]
+
+                if magic_header != 0xFF00:
+                    raise ValueError("Illegal Format: Invalid Magic")
+                    logging.error("Illegal Magic Header")
+
+                parsed_data["header"] = "SVR11"
+
+                # Skip padding
+                file.read(2)
+
+                # Total Move Count
+                total_moves = struct.unpack("<H", file.read(2))[0]
+                parsed_data["total_moves"] = total_moves
+
+                # Yet another padding to skip...
+                file.read(2)
+
+                # Read category table sector
+                categories = {}
+                for i in range(128):  # There are 128 Categories.
+                    category_value = struct.unpack("<H", file.read(2))[0]
+                    if category_value == 0xFFFF:  # EOCM (End of Category Marker)
+                        break
+                    elif i < len(category_names):
+                        categories[category_names[i]] = category_value
+
+                parsed_data["categories"] = categories
+
+                # Skip EOCM
+                file.read(2)
+                # Read move table sector
+                for move_index in range(total_moves):
+                    move_index_block = {}
+
+                    header = file.read(6)
+                    if (
+                        header != b"\xFF\xFF\xFF\xFF\xFF\xFF"
+                    ):  # Not sure if its a header or unused flag, but it's never not 0xFF
+                        raise ValueError(f"Invalid move header. Got {header}")
+                    # Category flags (UINT8, 0x10 long, split into 128 bits)
+                    category_flags = struct.unpack("<16B", file.read(16))
+                    move_index_block["category_flags"] = {
+                        category_names[i]: bool(category_flags[i // 8] & (1 << (i % 8)))
+                        for i in range(128)
+                        if bool(
+                            category_flags[i // 8]
+                            & (1 << (i % 8))  # Only display categories set to True
+                        )
+                    }
+
+                    move_name = file.read(96).decode("utf-8")
+                    move_index_block["name"] = sanitise_move_name(move_name)
+
+                    damage_flags = struct.unpack("<10B", file.read(10))
+                    move_index_block["damage_flags"] = {
+                        "unk1": damage_flags[0],
+                        "unk2": damage_flags[1],
+                        "unk3": damage_flags[2],
+                        "unk4": damage_flags[3],
+                        "unk5": damage_flags[4],
+                        "unk6": damage_flags[5],
+                        "unk7": damage_flags[6],
+                        "unk8": damage_flags[7],
+                        "unk9": damage_flags[8],
+                        "exclusive_id": damage_flags[9]
+                    }
+
+
+                    # Extract parameters
+                    parameters = file.read(21)
+                    column_flag_byte = parameters[0]
+                    column_flags = (
+                        {column_flag_map[column_flag_byte]: True}
+                        if column_flag_byte in column_flag_map
+                        else {}
+                    )
+                    if not isinstance(
+                        column_flags, dict
+                    ):  # Ensure column_flags is a dictionary
+                        column_flags = {}  # Default to an empty dictionary
+                    move_index_block["column_flags"] = column_flags
+
+                    # Exclude the first byte and extract unlock_id
+                    unlock_id = parameters[11]
+                    unlock_id_2 = parameters[12]
+                    move_index_block["unlock_id"] = unlock_id
+                    move_index_block["unlock_id_2"] = unlock_id_2
+                    move_index_block["parameters"] = [
+                        int(b) for b in parameters[3:]  # Remaining bytes (if any)
+                    ]
+
+                    move_index_id = struct.unpack("<H", file.read(2))[0]
+                    move_index_block["id"] = int(move_index_id)  # Convert to decimal
+
+                    parsed_data["moves"].append(move_index_block)
+
+        except FileNotFoundError:
+            raise FileNotFoundError(f"File {filename} not found.")
+        except Exception as e:
+            raise RuntimeError(f"An error occurred while parsing the file: {str(e)}")
+
+        finally:
+            # After parsing, reset the process priority to NORMAL
+            set_process_priority("NORMAL")
+
+        return json.dumps(parsed_data, indent=4)
 
 
 class WazaParser:
