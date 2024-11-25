@@ -1,15 +1,9 @@
 import ctypes
-import datetime
 import json
 import logging
 import os
 import psutil
-import shlex
 import struct
-import subprocess
-import sys
-import traceback
-import threading
 import time
 
 import win32con
@@ -45,151 +39,25 @@ PRIORITY_CLASSES = {
     "REALTIME": win32process.REALTIME_PRIORITY_CLASS,
 }
 
-
-# Add calls to handle_critical_error in relevant try-except blocks
 def monitor_and_adjust_priority(self):
-    try:
-        p = psutil.Process()
-        while True:
-            cpu_usage = p.cpu_percent(interval=1)
-            if cpu_usage < 10:
-                set_process_priority("IDLE")
-            elif 10 <= cpu_usage < 30:
-                set_process_priority("BELOW_NORMAL")
-            elif 30 <= cpu_usage < 60:
-                set_process_priority("NORMAL")
-            elif 60 <= cpu_usage < 80:
-                set_process_priority("ABOVE_NORMAL")
-            else:
-                set_process_priority("HIGH")
-            logging.info(f"CPU usage: {cpu_usage}% - Priority adjusted.")
-            time.sleep(5)
-    except Exception as e:
-        handle_critical_error(e)
-
-
-def update_heartbeat(self):
-    """Update the heartbeat timestamp periodically, even if there is no user input."""
-    self.last_heartbeat = time.time()
-    logging.debug("Heartbeat updated.")
-
-
-def watchdog(self_instance):
-    """Monitor the application's health, distinguishing between lockup and inactivity."""
-    max_inactive_duration = 300  # 5 minutes
+    p = psutil.Process()
     while True:
-        time.sleep(10)
-        time_since_last_heartbeat = time.time() - self_instance.last_heartbeat
-        if time_since_last_heartbeat > max_inactive_duration:
-            logging.warning(
-                f"No heartbeat detected in {time_since_last_heartbeat} seconds. "
-                "Application may be unresponsive."
-            )
-            # Check for potential freeze
-            self_instance.monitor_for_freeze()
-        else:
-            logging.debug("Application heartbeat is active.")
-
-
-def monitor_for_freeze(self):
-    """Monitor CPU usage to detect if the application is frozen."""
-    try:
-        p = psutil.Process()
         cpu_usage = p.cpu_percent(interval=1)
-        if cpu_usage < 5:  # Assumes the application is frozen if CPU usage is below 5%
-            logging.warning("CPU usage is extremely low, indicating potential freeze.")
-            self.ask_for_manual_recovery()
+        if cpu_usage < 10:
+            set_process_priority("IDLE")
+        elif 10 <= cpu_usage < 30:
+            set_process_priority("BELOW_NORMAL")
+        elif 30 <= cpu_usage < 60:
+            set_process_priority("NORMAL")
+        elif 60 <= cpu_usage < 80:
+            set_process_priority("ABOVE_NORMAL")
         else:
-            logging.info(f"Application is responsive with CPU usage at {cpu_usage}%")
-    except Exception as e:
-        logging.error(f"Error while checking CPU usage: {e}")
+            set_process_priority("HIGH")
+        
+        logging.info(f"CPU usage: {cpu_usage}% - Priority adjusted.")
+        time.sleep(5)
 
 
-def ask_for_manual_recovery(self):
-    response = messagebox.askyesno(
-        "Application Not Responding",
-        "It seems the application has stopped responding. Do you want to attempt recovery?",
-    )
-    if response:
-        self.attempt_recovery()
-    else:
-        logging.error("User opted not to attempt recovery. Exiting.")
-        sys.exit(1)
-
-
-def is_healthy(self):
-    return self.afs_path is not None and self.tree.get_children()
-
-
-def attempt_recovery(self):
-    try:
-        if self.afs_path:
-            with open(self.afs_path, "rb") as afs_file:
-                self.parse_afs(afs_file)
-            messagebox.showinfo("Recovery", "Application recovered successfully.")
-    except Exception as e:
-        handle_critical_error(e)
-
-
-def run_in_thread(self, target, *args, timeout=None, max_retries=1):
-    """
-    Runs a target function in a new thread with enhanced lifecycle management.
-
-    Parameters:
-    - target: Callable to execute in the thread.
-    - args: Positional arguments for the target function.
-    - timeout: Maximum allowed time for the thread to complete (in seconds). Default is None (no timeout).
-    - max_retries: Maximum number of times to retry in case of failure. Default is 1.
-    """
-
-    def thread_wrapper():
-        nonlocal retries
-        try:
-            logging.info(f"Thread started for {target.__name__} with args: {args}")
-            retries = 0
-            while retries <= max_retries:
-                start_time = time.time()
-                try:
-                    target(*args)
-                    break  # Exit loop if successful
-                except Exception as e:
-                    retries += 1
-                    logging.error(
-                        f"Error in thread ({target.__name__}): {e}. Retrying {retries}/{max_retries}"
-                    )
-                    if retries > max_retries:
-                        raise
-                    time.sleep(2)  # Backoff before retrying
-
-                # Timeout enforcement
-                elapsed_time = time.time() - start_time
-                if timeout and elapsed_time > timeout:
-                    logging.error(
-                        f"Thread {target.__name__} timed out after {timeout} seconds."
-                    )
-                    raise TimeoutError(
-                        f"Execution of {target.__name__} exceeded timeout."
-                    )
-            else:
-                logging.info(f"Thread for {target.__name__} completed successfully.")
-
-        except Exception as e:
-            logging.error(f"Thread {target.__name__} failed: {e}")
-
-        finally:
-            with self.lock:
-                self.active_threads.remove(thread)
-            logging.info(f"Thread for {target.__name__} ended.")
-
-    # Create and track the thread
-    retries = 0
-    thread = threading.Thread(
-        target=thread_wrapper, daemon=True
-    )  # Daemon thread to ensure it exits with the main program
-    with self.lock:
-        self.active_threads.append(thread)
-    thread.start()
-    logging.info(f"Thread {thread.name} started for target {target.__name__}.")
 
 
 def set_process_priority(priority_class):
@@ -204,143 +72,6 @@ def set_process_priority(priority_class):
         logging.info(f"Process priority set to {priority_class}")
     except Exception as e:
         logging.error(f"Failed to set process priority: {e}")
-
-
-# Constants for minidump creation
-MiniDumpNormal = 0x00000000
-MiniDumpWithDataSegs = 0x00000001
-MiniDumpWithFullMemory = 0x00000002
-MiniDumpWithHandleData = 0x00000004
-MiniDumpFilterMemory = 0x00000008
-MiniDumpWithUnloadedModules = 0x00000010
-MiniDumpWithIndirectlyReferencedMemory = 0x00000020
-MiniDumpFilterModulePaths = 0x00000040
-MiniDumpWithProcessThreadData = 0x00000080
-MiniDumpWithPrivateReadWriteMemory = 0x00000100
-MiniDumpWithoutOptionalData = 0x00000200
-MiniDumpWithFullMemoryInfo = 0x00000400
-MiniDumpWithThreadInfo = 0x00000800
-MiniDumpWithCodeSegs = 0x00001000
-
-# Load dbghelp.dll (which contains MiniDumpWriteDump)
-dbghelp = ctypes.windll.dbghelp
-
-
-# Exception and Context structures (for generating a minidump)
-class EXCEPTION_POINTERS(ctypes.Structure):
-    _fields_ = [("ExceptionRecord", ctypes.c_ulong), ("ContextRecord", ctypes.c_ulong)]
-
-
-class CONTEXT(ctypes.Structure):
-    _fields_ = [
-        ("ContextFlags", ctypes.c_ulong),
-        ("Dr0", ctypes.c_ulong),
-        ("Dr1", ctypes.c_ulong),
-        ("Dr2", ctypes.c_ulong),
-        ("Dr3", ctypes.c_ulong),
-        ("Dr6", ctypes.c_ulong),
-        ("Dr7", ctypes.c_ulong),
-        ("FloatSave", ctypes.c_byte * 512),
-        ("SegGs", ctypes.c_ulong),
-        ("SegFs", ctypes.c_ulong),
-        ("SegEs", ctypes.c_ulong),
-        ("SegDs", ctypes.c_ulong),
-        ("Edi", ctypes.c_ulong),
-        ("Esi", ctypes.c_ulong),
-        ("Ebx", ctypes.c_ulong),
-        ("Edx", ctypes.c_ulong),
-        ("Ecx", ctypes.c_ulong),
-        ("Eax", ctypes.c_ulong),
-        ("Ebp", ctypes.c_ulong),
-        ("Eip", ctypes.c_ulong),
-        ("SegCs", ctypes.c_ulong),
-        ("EFlags", ctypes.c_ulong),
-        ("Esp", ctypes.c_ulong),
-        ("SegSs", ctypes.c_ulong),
-        ("ExtendedRegisters", ctypes.c_byte * 512),
-    ]
-
-
-# Function to write minidump
-def write_minidump(exception_type, exception_value, tb):
-    dump_dir = os.path.join(os.getenv("LOCALAPPDATA"), "CrashDumps")
-    os.makedirs(dump_dir, exist_ok=True)
-
-    # Generate the dump file path with a unique timestamp and process ID
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    dump_file = os.path.join(dump_dir, f"AFSUtility.{timestamp}.dmp")
-
-    # Log the exception details
-    logging.error("Uncaught exception: %s", exception_value)
-    logging.error(
-        "Stack trace:\n%s",
-        "".join(traceback.format_exception(exception_type, exception_value, tb)),
-    )
-
-    # Set up the EXCEPTION_POINTERS and CONTEXT structures
-    exception_info = EXCEPTION_POINTERS()
-    context_info = CONTEXT()
-
-    try:
-        # Open the dump file for writing
-        with open(dump_file, "wb") as dump_file_handle:
-            # Call MiniDumpWriteDump to generate the minidump
-            result = dbghelp.MiniDumpWriteDump(
-                ctypes.windll.kernel32.GetCurrentProcess(),
-                os.getpid(),
-                dump_file_handle.fileno(),
-                MiniDumpWithDataSegs
-                | MiniDumpWithFullMemory
-                | MiniDumpWithProcessThreadData,
-                ctypes.byref(exception_info),
-                ctypes.byref(context_info),
-                None,
-            )
-
-            # Check if the dump was written successfully
-            if result == 0:
-                logging.error(
-                    f"Failed to create minidump. Error code: {ctypes.windll.kernel32.GetLastError()}"
-                )
-            else:
-                logging.info(f"Minidump successfully created at: {dump_file}")
-    except Exception as e:
-        logging.error(f"Failed to write crash dump: {e}")
-        logging.error("Error while creating minidump.")
-
-
-# Install the custom exception handler
-def install_exception_handler():
-    sys.excepthook = write_minidump
-
-
-def restart_application():
-    """Restarts the application using subprocess for automated recovery."""
-    try:
-        logging.info("Restarting application...")
-        safe_args = [shlex.quote(arg) for arg in sys.argv]
-        subprocess.Popen([sys.executable] + safe_args)
-        sys.exit(0)  # Close the current instance after starting a new one
-    except Exception as e:
-        logging.error(f"Failed to restart application: {e}")
-        messagebox.showerror(
-            "Restart Failed",
-            "Could not restart the application. Please restart manually.",
-        )
-
-
-def handle_critical_error(error):
-    """Handle critical error and restart if needed."""
-    logging.critical(f"Critical error encountered: {error}")
-    response = messagebox.askyesno(
-        "Critical Error",
-        "The application encountered a critical error.\nWould you like to restart?",
-    )
-    if response:
-        restart_application()
-    else:
-        sys.exit(1)
-
 
 def sanitise_move_name(raw_name):
     """
@@ -1424,8 +1155,6 @@ class YMIT:
         self.config_path = os.path.join(
             os.getenv("LOCALAPPDATA"), "WCG847", "YMIT", "config", "config.json"
         )
-        self.active_threads = []
-        self.lock = threading.Lock()
         # Initialise default settings
         self.settings = {
             "theme": "light",  # default theme
@@ -1492,15 +1221,6 @@ class YMIT:
                 "WCG847 is a reverse engineer, and modder. He specialises in WWE games and has taken an interest since 2016.",
             ),
         )
-        # Initialise last heartbeat timestamp
-        self.last_heartbeat = time.time()
-
-        # Start monitoring application health in a separate thread
-        monitoring_thread = threading.Thread(target=watchdog, args=(self,), daemon=True)
-        monitoring_thread = threading.Thread(
-            target=monitor_and_adjust_priority, args=(self,), daemon=True
-        )
-        monitoring_thread.start()
 
     def pref_display(self):
         # Create a new window for preferences
@@ -1605,10 +1325,18 @@ class YMIT:
                 filetypes=(("Yuke's Move Table Format", "*.dat"), ("All files", "*.*")),
             )
             if filename:
+                # Clear the treeview before populating
+                self.clear_treeview()
+
                 parsed_data = WazaParser.parse_waza(filename)
                 self.populate_treeview(json.loads(parsed_data))
         except Exception as e:
             messagebox.showerror("Error", str(e))
+
+    def clear_treeview(self):
+        # Delete all items in the treeview
+        for item in self.treeview.get_children():
+            self.treeview.delete(item)
 
     def populate_treeview(self, data, parent=""):
 
@@ -1637,6 +1365,7 @@ class YMIT:
                 self.treeview.insert(parent, "end", text=key, values=(value,))
 
     def deserialise_waza(self):
+        self.moves = []  # Initialize moves to collect all move items
         def tree_to_structure(parent=""):
             children = self.treeview.get_children(parent)
 
@@ -1645,12 +1374,10 @@ class YMIT:
                 values = self.treeview.item(parent, "values")
                 if values and values[0]:
                     try:
-                        set_process_priority("ABOVE_NORMAL")
+                        set_process_priority("ABOVE_NORMAL")  # Ensure this is defined elsewhere
                         parsed_value = json.loads(values[0])
                         # Ensure parsed_value is a valid type
-                        if isinstance(
-                            parsed_value, (dict, list, str, int, float, bool)
-                        ):
+                        if isinstance(parsed_value, (dict, list, str, int, float, bool)):
                             return parsed_value
                         else:
                             return None  # Invalid parsed value
@@ -1659,32 +1386,39 @@ class YMIT:
                 return None
 
             # If there are children, decide the structure
-            first_child_values = self.treeview.item(children[0], "values")
-            if first_child_values and first_child_values[0] == "list_item":
-                # Return a list if the first child is marked as a list
-                return [tree_to_structure(child) for child in children]
-            else:
-                # Otherwise, build a dictionary
-                result = {}
-                for child in children:
-                    key = self.treeview.item(child, "text")
-                    if key == "categories" or key == "total_moves":
-                        continue  # Skip unwanted keys
+            result = {}
+            for child in children:
+                key = self.treeview.item(child, "text")
+                value = tree_to_structure(child)
 
-                    value = tree_to_structure(child)
+                # If key starts with "Item X", group into moves
+                if key.startswith("Item "):
+                    move_data = tree_to_structure(child)
+                    if isinstance(move_data, dict):
+                        self.moves.append(move_data)  # Collect move data in the class-level moves
+                    continue
 
-                    # Fix category_flags or column_flags during reconstruction
-                    if key == "category_flags" or key == "column_flags":
-                        if isinstance(value, str) and value in ("dict", "{}"):
-                            # Reconstruct category_flags as an empty dictionary
-                            value = {}
-                        elif isinstance(value, list):
-                            # Handle unexpected structures (e.g., list instead of dict)
-                            value = {f"flag_{i}": flag for i, flag in enumerate(value)}
+                # Skip unwanted keys like categories or total_moves
+                if key in ("categories", "total_moves"):
+                    continue
 
-                    result[key] = value
-                return result
+                # Handle parameters explicitly as a parent with child items
+                if key == "parameters":
+                    parameters_dict = {}
+                    parameter_children = self.treeview.get_children(child)
+                    for param_child in parameter_children:
+                        param_key = self.treeview.item(param_child, "text")
+                        param_value = self.treeview.item(param_child, "values")
+                        parameters_dict[param_key] = int(param_value[0]) if param_value else 0
+                    result[key] = parameters_dict
+                    continue
 
+                # Add other values to the result
+                result[key] = value
+
+            return result
+
+        # Prompt user to save the file
         filename = filedialog.asksaveasfilename(
             title="Save JSON File",
             defaultextension=".json",
@@ -1692,14 +1426,18 @@ class YMIT:
         )
         if filename:
             try:
+                # Generate data structure from treeview
                 data = tree_to_structure()
+                # Add moves to the root level of the data
+                if self.moves:
+                    data["moves"] = self.moves
                 with open(filename, "w") as f:
                     json.dump(data, f, indent=4)  # Save JSON data to file
                 messagebox.showinfo("Success", "File saved successfully.")
             except Exception as e:
                 messagebox.showerror("Error", str(e))
             finally:
-                set_process_priority("NORMAL")
+                set_process_priority("NORMAL")  # Ensure this is defined elsewhere
 
     def serialise_waza(self):
         category_names = SVR_HCTP_CATE_NAMES
@@ -1725,17 +1463,13 @@ class YMIT:
             with open(input_json_filename, "r") as json_file:
                 data = json.load(json_file)
 
-            # Handle 'moves' as a dictionary
-            moves = data.get("moves", {})
-            if not isinstance(moves, dict):
-                raise ValueError("'moves' must be a dictionary in the JSON schema.")
+            # Handle 'moves' as a list of dictionaries
+            moves = data.get("moves", [])
+            if not isinstance(moves, list):
+                raise ValueError("'moves' must be a list in the JSON schema.")
 
-            # Convert dictionary values to a list of moves
-            moves_list = list(moves.values())
             # Sort moves alphabetically by 'name'
-            moves_list = sorted(
-                moves_list, key=lambda move: move.get("name", "").lower()
-            )
+            moves_list = sorted(moves, key=lambda move: move.get("name", "").lower())
             total_moves = len(moves_list)
 
             # Determine format from the parsed JSON header
@@ -1746,33 +1480,36 @@ class YMIT:
             if format_header == "SVR06":
                 category_names = SVR06_CATE_NAMES
 
+            # Initialize category_counts for all categories
             category_counts = {name: 0 for name in category_names}
 
-            # Preprocess moves to clean up invalid "category_flags"
-            for move_key, move in moves.items():
-                if move.get("category_flags") == "dict":
-                    print(
-                        f"Replacing 'dict' with {{}} in category_flags for move: {move_key}"
-                    )
-                    move["category_flags"] = {}
-
+            # Count the 'True' flags in category_flags for each move
             for move in moves_list:
-                # Get category_flags with validation
                 category_flags = move.get("category_flags", {})
-
-                if category_flags == "dict":  # Handle literal "dict" as a string
-                    print(f"Fixing invalid category_flags for move: {move}")
-                    category_flags = {}
+            
+                # Validate and ensure category_flags is a dictionary
+                if isinstance(category_flags, str):
+                    if category_flags.lower() == "dict":
+                        category_flags = {}
+                    else:
+                        raise ValueError(
+                            f"Expected 'category_flags' to be a dictionary or 'dict', got {type(category_flags).__name__}: {category_flags}"
+                        )
 
                 if not isinstance(category_flags, dict):
                     raise ValueError(
                         f"Expected 'category_flags' to be a dictionary, got {type(category_flags).__name__}: {category_flags}"
                     )
 
-                # Process valid category_flags
+                # Count 'True' values for each category
                 for category, is_flag_set in category_flags.items():
                     if category in category_counts and is_flag_set == "True":
                         category_counts[category] += 1
+
+
+                # Replace the category_flags in the move with the validated version
+                move["category_flags"] = category_flags
+
 
             with open(output_waza_filename, "wb") as binary_file:
                 # Write header and pads
@@ -1781,13 +1518,6 @@ class YMIT:
                 binary_file.write(b"\x00\x00")
 
                 if format_header == "SVR05" or format_header == "SVR06":
-                    # Iterate over moves to calculate category counts
-                    for move in moves_list:
-                        category_flags = move.get("category_flags", {})
-                        for category, is_flag_set in category_flags.items():
-                            if category in category_counts and is_flag_set == "True":
-                                category_counts[category] += 1
-
                     # Write category counts to the binary file
                     for category in category_names:
                         binary_file.write(struct.pack("<H", category_counts[category]))
@@ -1815,17 +1545,12 @@ class YMIT:
                             category_flags[byte_index] |= 1 << bit_position
                     binary_file.write(struct.pack("<16B", *category_flags))
 
-                    if format_header == "SVR05" or format_header == "HCTP":
-                        # Handle move name
-                        move_name = move.get("name", "Unknown").ljust(32, "\x00")[:32]
-                        binary_file.write(move_name.encode("utf-8"))
+                    # Serialize move name
+                    move_name = move.get("name", "Unknown")
+                    name_length = 32 if format_header in ["SVR05", "HCTP"] else 96
+                    binary_file.write(move_name.ljust(name_length, "\x00")[:name_length].encode("utf-8"))
 
-                    elif format_header == "SVR06":
-                        # Handle move name
-                        move_name = move.get("name", "Unknown").ljust(96, "\x00")[:96]
-                        binary_file.write(move_name.encode("utf-8"))
-
-                    # Extract damage flags
+                    # Serialize damage flags
                     damage_flags = move.get("damage_flags", {})
                     binary_file.write(
                         struct.pack(
@@ -1835,55 +1560,42 @@ class YMIT:
                             damage_flags.get("exclusive_id", 0),
                         )
                     )
-                    if format_header == "SVR05" or format_header == "HCTP":
-                        # Handle column flags and parameters
-                        column_flag_byte = 0x00
-                        column_flags = move.get("column_flags", {})
-                        if isinstance(column_flags, dict):
-                            for key, value in column_flags.items():
-                                if value and key in column_flag_map.values():
-                                    column_flag_byte = list(column_flag_map.keys())[
-                                        list(column_flag_map.values()).index(key)
-                                    ]
-                                    break
 
-                        unlock_id = move.get("unlock_id", 0)
-                        unlock_id_2 = move.get("unlock_id_2", 0)
-                        parameters = move.get("parameters", {}).values()
-                        parameters = [int(param) for param in parameters]
+                    # Serialize column flags and parameters
+                    column_flag_byte = 0x00
+                    column_flags = move.get("column_flags", {})
+                    if isinstance(column_flags, dict):
+                        for key, value in column_flags.items():
+                            if value and key in column_flag_map.values():
+                                column_flag_byte = list(column_flag_map.keys())[
+                                    list(column_flag_map.values()).index(key)
+                                ]
+                                break
 
-                        parameters_with_flags = [
-                            column_flag_byte,
-                            unlock_id,
-                            unlock_id_2,
-                            *parameters,
-                        ]
-                        binary_file.write(struct.pack("<5B", *parameters_with_flags))
+                    unlock_id = move.get("unlock_id", 0)
+                    unlock_id_2 = move.get("unlock_id_2", 0)
+                    # Extract parameters
+                    parameters = move.get("parameters", {})
+                    parameters_values = [parameters.get(f"Item {i}", 0) for i in range(18)]
+
+                    # Combine with flags
+                    parameters_with_flags = [
+                        column_flag_byte,
+                        unlock_id,
+                        unlock_id_2,
+                        *parameters_values,
+                    ]
+
+                    # Write parameters based on the format
+                    if format_header in ["SVR05", "HCTP"]:
+                        # Only the first 5 items are used for SVR05 and HCTP
+                        binary_file.write(struct.pack("<5B", *parameters_with_flags[:5]))
                     elif format_header == "SVR06":
-                        # Handle column flags and parameters
-                        column_flag_byte = 0x00
-                        column_flags = move.get("column_flags", {})
-                        if isinstance(column_flags, dict):
-                            for key, value in column_flags.items():
-                                if value and key in column_flag_map.values():
-                                    column_flag_byte = list(column_flag_map.keys())[
-                                        list(column_flag_map.values()).index(key)
-                                    ]
-                                    break
-
-                        unlock_id = move.get("unlock_id", 0)
-                        unlock_id_2 = move.get("unlock_id_2", 0)
-                        parameters = move.get("parameters", {}).values()
-                        parameters = [int(param) for param in parameters]
-
-                        parameters_with_flags = [
-                            column_flag_byte,
-                            unlock_id,
-                            unlock_id_2,
-                            *parameters,
-                        ]
+                        # All 21 items are used for SVR06
                         binary_file.write(struct.pack("<21B", *parameters_with_flags))
-                    # Handle move ID
+
+
+                    # Serialize move ID
                     move_id = move.get("id", 0)
                     binary_file.write(struct.pack("<H", move_id))
 
@@ -1894,6 +1606,7 @@ class YMIT:
             messagebox.showerror("Error", str(e))
         finally:
             set_process_priority("NORMAL")
+
 
     def about_display(self, title, description):
         about_window = tk.Toplevel()
